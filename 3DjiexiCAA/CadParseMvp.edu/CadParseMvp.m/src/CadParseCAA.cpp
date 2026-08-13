@@ -5453,8 +5453,8 @@ static bool MountProductNavigateTree(CATIProduct* instance_product,
                                      const ProductInstanceRecord& instance)
 {
   if (instance.child_count > 0) return false;
-  CATBaseUnknown* root = reference_product ? static_cast<CATBaseUnknown*>(reference_product) :
-    static_cast<CATBaseUnknown*>(instance_product);
+  CATBaseUnknown* root = instance_product ? static_cast<CATBaseUnknown*>(instance_product) :
+    static_cast<CATBaseUnknown*>(reference_product);
   if (!root) return false;
 
   const std::string reference_node_id = std::string("instance:") + instance.instance_id +

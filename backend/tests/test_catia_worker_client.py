@@ -1,5 +1,6 @@
 import hashlib
 import json
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -113,6 +114,46 @@ async def test_http_worker_rejects_checksum_mismatch(tmp_path):
         await client.process(source, tmp_path / "result")
 
     assert error.value.code == "catia_worker_artifact_invalid"
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_http_worker_uploads_catproduct_with_local_dependency_bundle(tmp_path):
+    source = tmp_path / "5621C04000G23.CATProduct"
+    source.write_bytes(b"CATProduct-root")
+    (tmp_path / "R_5621C04000G23.CATPart").write_bytes(b"CATPart-ref")
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ready", "accepting_jobs": True})
+        if request.url.path == "/v1/jobs" and request.method == "POST":
+            body = await request.aread()
+            assert b"catia-bundle.zip" in body
+            start = body.find(b"PK\x03\x04")
+            end = body.rfind(b"PK\x05\x06")
+            assert start >= 0 and end >= start
+            archive_bytes = body[start : end + 22]
+            archive_path = tmp_path / "uploaded.zip"
+            archive_path.write_bytes(archive_bytes)
+            with zipfile.ZipFile(archive_path) as archive:
+                assert sorted(archive.namelist()) == [
+                    "5621C04000G23.CATProduct",
+                    "R_5621C04000G23.CATPart",
+                ]
+            return httpx.Response(202, json={"worker_job_id": "job-zip", "status": "queued"})
+        if request.url.path == "/v1/jobs/job-zip":
+            return httpx.Response(200, json={"worker_job_id": "job-zip", "status": "completed", "artifacts": []})
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://worker")
+    client = CatiaWorkerClient(base_url="http://worker", poll_interval_seconds=0, http_client=http)
+
+    result = await client.process(source, tmp_path / "result")
+
+    assert result.worker_job_id == "job-zip"
+    assert len(requests) == 3
     await http.aclose()
 
 

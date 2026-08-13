@@ -81,6 +81,15 @@ class WorkerJob:
 Processor = Callable[[WorkerJob, Path, CatiaWorkerServerSettings], Awaitable[None]]
 
 
+def _safe_source_name(filename: str | None, suffix: str) -> str:
+    name = Path(filename or "").name
+    if not name:
+        return "source.CATProduct" if suffix == ".catproduct" else "source.CATPart"
+    if Path(name).suffix.lower() != suffix:
+        return "source.CATProduct" if suffix == ".catproduct" else "source.CATPart"
+    return name
+
+
 class WorkerService:
     """用途：管理串行队列、任务状态文件和本任务创建的外部进程。"""
 
@@ -110,7 +119,7 @@ class WorkerService:
         worker_job_id = str(uuid4())
         job_root = self.settings.work_dir / worker_job_id
         job_root.mkdir(parents=True)
-        source_name = "source.zip" if suffix == ".zip" else ("source.CATProduct" if suffix == ".catproduct" else "source.CATPart")
+        source_name = "source.zip" if suffix == ".zip" else _safe_source_name(upload.filename, suffix)
         source_path = job_root / source_name
         digest = hashlib.sha256()
         size = 0
@@ -223,6 +232,16 @@ def _resolve_job_source(job_root: Path) -> Path:
         return job_root / "source.CATProduct"
     if (job_root / "source.CATPart").is_file():
         return job_root / "source.CATPart"
+    loose_sources = sorted(
+        path
+        for path in job_root.iterdir()
+        if path.is_file() and path.suffix.lower() in {".catproduct", ".catpart"}
+    )
+    catproducts = [path for path in loose_sources if path.suffix.lower() == ".catproduct"]
+    if len(catproducts) == 1:
+        return catproducts[0]
+    if len(loose_sources) == 1:
+        return loose_sources[0]
     raise WorkerExecutionError("catia_source_missing", "queued_caa", "CATIA 源文件不存在")
 
 

@@ -48,6 +48,8 @@ def test_worker_rejects_non_catia_and_empty_upload(tmp_path):
 
 
 def test_worker_accepts_catproduct_and_preserves_extension_for_caa(tmp_path):
+    from app.catia_worker.server import _resolve_job_source
+
     async def noop_processor(*_args, **_kwargs):
         return None
 
@@ -58,7 +60,9 @@ def test_worker_accepts_catproduct_and_preserves_extension_for_caa(tmp_path):
 
     assert response.status_code == 202
     job_id = response.json()["worker_job_id"]
-    assert (tmp_path / job_id / "source.CATProduct").read_bytes() == b"CATProduct"
+    job_root = tmp_path / job_id
+    assert (job_root / "assy.CATProduct").read_bytes() == b"CATProduct"
+    assert _resolve_job_source(job_root) == job_root / "assy.CATProduct"
 
 
 def test_worker_accepts_catproduct_zip_and_resolves_bundle_entry(tmp_path):

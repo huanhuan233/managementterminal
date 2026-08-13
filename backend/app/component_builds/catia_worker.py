@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -56,6 +58,28 @@ class CatiaWorkerResult:
 StageCallback = Callable[[dict], Awaitable[None]]
 
 
+def _catproduct_upload_path(source_path: Path) -> tuple[Path, tempfile.TemporaryDirectory[str] | None]:
+    if source_path.suffix.lower() != ".catproduct":
+        return source_path, None
+    dependency_suffixes = {".catproduct", ".catpart", ".cgr"}
+    candidates = sorted(
+        path
+        for path in source_path.parent.rglob("*")
+        if path.is_file() and path.suffix.lower() in dependency_suffixes
+    )
+    if len(candidates) <= 1:
+        return source_path, None
+    temporary = tempfile.TemporaryDirectory()
+    archive_path = Path(temporary.name) / f"{source_path.stem}-catia-bundle.zip"
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.write(source_path, source_path.name)
+        for path in candidates:
+            if path.resolve() == source_path.resolve():
+                continue
+            archive.write(path, path.relative_to(source_path.parent).as_posix())
+    return archive_path, temporary
+
+
 class CatiaWorkerClient:
     """用途：上传 CATPart 字节、轮询 Windows Worker，并校验下载产物。"""
 
@@ -100,12 +124,13 @@ class CatiaWorkerClient:
         health = await self.health()
         if not health.get("accepting_jobs", False):
             raise CatiaWorkerError("catia_worker_rejected", "Windows CATIA Worker 当前不可接单")
+        upload_path, temporary_upload = _catproduct_upload_path(source_path)
         try:
-            with source_path.open("rb") as stream:
+            with upload_path.open("rb") as stream:
                 response = await self.http.post(
                     f"{self.base_url}/v1/jobs",
                     headers=self._headers(),
-                    files={"source_file": (source_path.name, stream, "application/octet-stream")},
+                    files={"source_file": (upload_path.name, stream, "application/octet-stream")},
                 )
             if response.status_code != 202:
                 raise CatiaWorkerError("catia_worker_rejected", f"Windows CATIA Worker 拒绝任务：HTTP {response.status_code}")
@@ -130,6 +155,8 @@ class CatiaWorkerClient:
         except (ValueError, OSError) as exc:
             raise CatiaWorkerError("catia_worker_artifact_invalid", "Windows CATIA Worker 产物无效") from exc
         finally:
+            if temporary_upload is not None:
+                temporary_upload.cleanup()
             if self._owns_http_client:
                 await self.http.aclose()
 
