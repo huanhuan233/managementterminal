@@ -135,11 +135,13 @@ function handleSelect(node: FeatureTreeNode) {
 }
 
 function handleOpenProperties(node: FeatureTreeNode) {
-  if (node.hasProperties) emit('openProperties', node);
-  else emit('missingProperties', node);
+  emit('openProperties', node);
 }
 
-function handleNodeContextMenu(_event: Event, node: FeatureTreeNode) {
+function handleNodeContextMenu(event: Event, node: FeatureTreeNode) {
+  event.preventDefault();
+  event.stopPropagation();
+  emit('select', node);
   handleOpenProperties(node);
 }
 
