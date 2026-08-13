@@ -1342,6 +1342,16 @@ int SelfTestSuite::RunAll()
   second_instance.instance_name = "Shared.2";
   second_instance.child_index = 2;
   product_tree_context.product_instances.push_back(second_instance);
+  NativeTreeNodeRecord mounted_reference_feature;
+  mounted_reference_feature.node_id = "instance:I001/feature:PTREE_000001";
+  mounted_reference_feature.parent_id = "instance:I001";
+  mounted_reference_feature.display_text = "Plane.xy";
+  mounted_reference_feature.node_kind = "native_feature";
+  mounted_reference_feature.document_kind = "catpart";
+  mounted_reference_feature.instance_id = "I001";
+  mounted_reference_feature.reference_id = "R_SHARED";
+  mounted_reference_feature.source_feature_id = "PTREE_000001";
+  product_tree_context.native_tree_nodes.push_back(mounted_reference_feature);
   tests.Check(writer.Write(std::vector<FeatureRecord>(), std::vector<RelationRecord>(),
                            product_tree_context, "selftest_output_product_tree", write_error),
               "Product native tree JSON artifact writes successfully");
@@ -1351,6 +1361,10 @@ int SelfTestSuite::RunAll()
               product_tree_json.find("\"node_id\":\"instance:I002\"") != std::string::npos &&
               product_tree_json.find("\"reference_id\":\"R_SHARED\"") != std::string::npos,
               "Repeated Product instances preserve unique node ids under the same Reference");
+  tests.Check(product_tree_json.find("\"node_id\":\"instance:I001/feature:PTREE_000001\"") !=
+                std::string::npos &&
+              product_tree_json.find("\"display_text\":\"Plane.xy\"") != std::string::npos,
+              "Product native tree writer preserves mounted Reference feature nodes");
 
   // 验证派生记录存在悬空来源 ID 时 Writer 拒绝生成正式结果。
   std::vector<BusinessFeatureRecord> invalid_business;

@@ -3232,6 +3232,11 @@ static void AddProductReference(CATIProduct* product, ParseContext& context,
   context.product_references.push_back(record);
 }
 
+static bool MountProductReferenceSpecTree(CATIProduct* instance_product,
+                                          CATIProduct* reference_product,
+                                          ParseContext& context,
+                                          const ProductInstanceRecord& instance);
+
 static bool ReadProductAbsTransform(CATIProduct* product, ProductInstanceRecord& instance,
                                     ParseContext& context)
 {
@@ -3330,6 +3335,7 @@ static void CrawlProductInstance(CATIProduct* product, ParseContext& context,
   ReadProductAbsTransform(product, instance, context);
   try { instance.child_count = product->GetChildrenCount(); }
   catch (...) { instance.child_count = 0; }
+  MountProductReferenceSpecTree(product, reference_ptr, context, instance);
   context.product_instances.push_back(instance);
   const std::string current_id = instance.instance_id;
 
@@ -4969,6 +4975,190 @@ private:
   PrismCapabilityView _pad_capability;
   PrismCapabilityView _pocket_capability;
 };
+
+static std::string ProductTreeFeatureId(long index)
+{
+  std::ostringstream id;
+  id << "PTREE_";
+  if (index < 10) id << "00000";
+  else if (index < 100) id << "0000";
+  else if (index < 1000) id << "000";
+  else if (index < 10000) id << "00";
+  else if (index < 100000) id << "0";
+  id << index;
+  return id.str();
+}
+
+static std::string NativeTreeDisplayText(const TypeFingerprint& fingerprint)
+{
+  if (!fingerprint.display_name.empty()) return fingerprint.display_name;
+  if (!fingerprint.internal_name.empty()) return fingerprint.internal_name;
+  if (!fingerprint.startup_type.empty()) return fingerprint.startup_type;
+  return "unnamed";
+}
+
+static bool ProductSpecTreeHasChildren(CATISpecObject* spec)
+{
+  if (!spec) return false;
+  try
+  {
+    CATListValCATISpecObject_var* children = spec->ListComponents();
+    if (!children) return false;
+    SpecListGuard guard(children);
+    return children->Size() > 0;
+  }
+  catch (...) { return false; }
+}
+
+static bool AppendProductSpecTreeNode(CATISpecObject* spec, ParseContext& context,
+                                      const ProductInstanceRecord& instance,
+                                      const std::string& parent_node_id,
+                                      const std::string& parent_path,
+                                      long source_index, long& local_index,
+                                      std::set<CATISpecObject*>& path_guard)
+{
+  if (!spec) return false;
+  if (path_guard.find(spec) != path_guard.end())
+  {
+    context.AddDiagnostic("warning", "product_native_tree",
+                          "PRODUCT_REFERENCE_SPEC_TREE_CYCLE",
+                          "CATISpecObject cycle detected while mounting product reference tree",
+                          std::string("instance:") + instance.instance_id);
+    return true;
+  }
+  path_guard.insert(spec);
+  try
+  {
+    SpecObjectView view(spec, context);
+    const TypeFingerprint& fingerprint = view.GetFingerprint();
+    const std::string feature_id = ProductTreeFeatureId(local_index++);
+    const std::string display_text = NativeTreeDisplayText(fingerprint);
+    const std::string tree_path = parent_path.empty() ? display_text :
+      parent_path + "/" + display_text;
+
+    NativeTreeNodeRecord node;
+    node.node_id = std::string("instance:") + instance.instance_id +
+      "/feature:" + feature_id;
+    node.parent_id = parent_node_id;
+    node.display_text = display_text;
+    node.display_name = fingerprint.display_name;
+    node.internal_name = fingerprint.internal_name;
+    node.startup_type = fingerprint.startup_type.empty() ?
+      fingerprint.native_type : fingerprint.startup_type;
+    node.document_kind = "catpart";
+    node.node_kind = "native_feature";
+    node.source_index = source_index;
+    node.traversal_index = static_cast<long>(context.native_tree_nodes.size() + 1);
+    node.tree_path = tree_path;
+    node.instance_id = instance.instance_id;
+    node.parent_instance_id = instance.parent_instance_id;
+    node.reference_id = instance.reference_id;
+    node.source_feature_id = feature_id;
+    node.source_node_id = feature_id;
+    node.has_children = ProductSpecTreeHasChildren(spec);
+    node.properties_available = true;
+    node.attributes["value_source"] = "CATISpecObject::ListComponents";
+    node.attributes["mounted_from_product_reference"] = "true";
+    node.attributes["container_kind"] = fingerprint.container_kind;
+    if (!fingerprint.native_type.empty()) node.attributes["native_type"] = fingerprint.native_type;
+    if (!fingerprint.super_types.empty()) node.attributes["super_type"] = fingerprint.super_types[0];
+    context.native_tree_nodes.push_back(node);
+
+    CATListValCATISpecObject_var* children = spec->ListComponents();
+    if (children)
+    {
+      SpecListGuard children_guard(children);
+      int index = 0;
+      for (index = 1; index <= children->Size(); ++index)
+      {
+        CATISpecObject_var child = (*children)[index];
+        if (child != NULL_var)
+        {
+          CATISpecObject* child_pointer = child;
+          AppendProductSpecTreeNode(child_pointer, context, instance, node.node_id,
+                                    tree_path, index, local_index, path_guard);
+        }
+      }
+    }
+    path_guard.erase(spec);
+    return true;
+  }
+  catch (...)
+  {
+    path_guard.erase(spec);
+    context.AddDiagnostic("warning", "product_native_tree",
+                          "PRODUCT_REFERENCE_SPEC_TREE_NODE_FAILED",
+                          "CATISpecObject node could not be mounted; scan continued",
+                          std::string("instance:") + instance.instance_id);
+    return false;
+  }
+}
+
+static bool QueryProductSpecObject(CATIProduct* product, CATISpecObject** spec)
+{
+  if (!product || !spec) return false;
+  *spec = 0;
+  try
+  {
+    if (SUCCEEDED(product->QueryInterface(IID_CATISpecObject,
+        reinterpret_cast<void**>(spec))) && *spec)
+      return true;
+  }
+  catch (...) { *spec = 0; }
+  return false;
+}
+
+static bool MountProductReferenceSpecTree(CATIProduct* instance_product,
+                                          CATIProduct* reference_product,
+                                          ParseContext& context,
+                                          const ProductInstanceRecord& instance)
+{
+  if (instance.instance_id.empty()) return false;
+  CATISpecObject* spec = 0;
+  std::string source_api;
+  if (QueryProductSpecObject(reference_product, &spec))
+    source_api = "reference_product.QueryInterface(CATISpecObject)";
+  else if (QueryProductSpecObject(instance_product, &spec))
+    source_api = "instance_product.QueryInterface(CATISpecObject)";
+  if (!spec)
+  {
+    context.AddDiagnostic("info", "product_native_tree",
+                          "PRODUCT_REFERENCE_SPEC_TREE_UNAVAILABLE",
+                          "CATIProduct instance/reference did not expose CATISpecObject; BOM node preserved",
+                          std::string("instance:") + instance.instance_id);
+    return false;
+  }
+
+  CaaInterfaceGuard<CATISpecObject> spec_guard(spec);
+  const std::string reference_node_id = std::string("instance:") + instance.instance_id +
+    "/reference:" + instance.reference_id;
+  NativeTreeNodeRecord reference_node;
+  reference_node.node_id = reference_node_id;
+  reference_node.parent_id = std::string("instance:") + instance.instance_id;
+  reference_node.display_text = instance.reference_id.empty() ? instance.instance_name :
+    instance.reference_id;
+  reference_node.display_name = reference_node.display_text;
+  reference_node.internal_name = instance.reference_id;
+  reference_node.startup_type = "CATIProductReference";
+  reference_node.document_kind = "catpart";
+  reference_node.node_kind = "product_reference";
+  reference_node.source_index = 0;
+  reference_node.traversal_index = static_cast<long>(context.native_tree_nodes.size() + 1);
+  reference_node.tree_path = instance.tree_path + "/" + reference_node.display_text;
+  reference_node.instance_id = instance.instance_id;
+  reference_node.parent_instance_id = instance.parent_instance_id;
+  reference_node.reference_id = instance.reference_id;
+  reference_node.source_node_id = instance.reference_id;
+  reference_node.has_children = true;
+  reference_node.properties_available = true;
+  reference_node.attributes["value_source"] = source_api;
+  context.native_tree_nodes.push_back(reference_node);
+
+  long local_index = 1;
+  std::set<CATISpecObject*> path_guard;
+  return AppendProductSpecTreeNode(spec, context, instance, reference_node_id,
+                                   reference_node.tree_path, 1, local_index, path_guard);
+}
 
 // 基础 Typed Decoder：封装所有核心节点共有的“读取基础属性并标记 typed success”行为。
 class CoreDecoder : public IFeatureDecoder

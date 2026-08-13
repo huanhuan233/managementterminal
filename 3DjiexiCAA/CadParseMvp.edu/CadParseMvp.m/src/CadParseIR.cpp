@@ -980,7 +980,6 @@ static void CollectFeatureSelection(const ParseContext& context, const std::stri
 static void BuildNativeTreeNodes(const std::vector<FeatureRecord>& features,
                                  ParseContext& context)
 {
-  if (!context.native_tree_nodes.empty()) return;
   long traversal = 0;
   const bool is_product = !context.product_instances.empty();
   const std::string document_kind = context.metadata.document_kind.empty() ?
@@ -988,6 +987,8 @@ static void BuildNativeTreeNodes(const std::vector<FeatureRecord>& features,
 
   if (is_product)
   {
+    std::vector<NativeTreeNodeRecord> mounted_reference_nodes = context.native_tree_nodes;
+    context.native_tree_nodes.clear();
     NativeTreeNodeRecord root;
     root.node_id = "product:root";
     root.display_text = context.metadata.input_file_name.empty() ? "CATProduct" :
@@ -1033,11 +1034,26 @@ static void BuildNativeTreeNodes(const std::vector<FeatureRecord>& features,
       node.diagnostic_ids = instance->diagnostic_ids;
       context.native_tree_nodes.push_back(node);
     }
-    context.AddDiagnostic("info", "native_tree", "PRODUCT_REFERENCE_FEATURE_TREE_NOT_MOUNTED",
-                          "Product BOM is emitted; reference CATPart feature mounting requires validated reference document traversal",
-                          "product:root");
+    if (mounted_reference_nodes.empty())
+    {
+      context.AddDiagnostic("info", "native_tree", "PRODUCT_REFERENCE_FEATURE_TREE_NOT_MOUNTED",
+                            "Product BOM is emitted; reference CATPart feature mounting requires validated reference document traversal",
+                            "product:root");
+    }
+    else
+    {
+      std::vector<NativeTreeNodeRecord>::iterator mounted = mounted_reference_nodes.begin();
+      for (; mounted != mounted_reference_nodes.end(); ++mounted)
+      {
+        mounted->traversal_index = traversal++;
+        context.native_tree_nodes.push_back(*mounted);
+      }
+      context.runtime_info["product_reference_feature_tree_status"] = "mounted";
+    }
     return;
   }
+
+  if (!context.native_tree_nodes.empty()) return;
 
   std::map<std::string, bool> has_children;
   std::vector<FeatureRecord>::const_iterator child = features.begin();
