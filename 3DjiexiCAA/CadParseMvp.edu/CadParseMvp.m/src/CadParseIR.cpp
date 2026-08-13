@@ -1103,6 +1103,16 @@ static void AddNodeProperty(ParseContext& context, const std::string& node_id,
                             long display_order)
 {
   if (value.empty()) return;
+  std::vector<NodePropertyRecord>::const_iterator existing =
+    context.node_properties.begin();
+  for (; existing != context.node_properties.end(); ++existing)
+  {
+    if (existing->node_id == node_id &&
+        existing->tab_id == (tab_id ? tab_id : "") &&
+        existing->group_id == (group_id ? group_id : "") &&
+        existing->field_key == (field_key ? field_key : ""))
+      return;
+  }
   NodePropertyRecord property;
   property.node_id = node_id;
   property.tab_id = tab_id;
@@ -1132,7 +1142,6 @@ static const ProductReferenceRecord* FindProductReference(const ParseContext& co
 
 static void BuildNodeProperties(ParseContext& context)
 {
-  if (!context.node_properties.empty()) return;
   std::vector<NativeTreeNodeRecord>::const_iterator node = context.native_tree_nodes.begin();
   for (; node != context.native_tree_nodes.end(); ++node)
   {

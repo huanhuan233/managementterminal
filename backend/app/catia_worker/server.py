@@ -95,7 +95,10 @@ class WorkerService:
 
     def __init__(self, settings: CatiaWorkerServerSettings, processor: Processor | None = None):
         # 用途：任务目录必须在启动时固定为绝对路径；CAA 子进程会切换工作目录，不能再次解释相对路径。
-        settings.work_dir = settings.work_dir.resolve()
+        if not settings.work_dir.is_absolute():
+            settings.work_dir = (Path.cwd() / settings.work_dir).resolve()
+        else:
+            settings.work_dir = settings.work_dir.resolve()
         self.settings = settings
         self.processor = processor or _process_job
         self.jobs: dict[str, WorkerJob] = {}

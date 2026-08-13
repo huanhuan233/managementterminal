@@ -67,6 +67,8 @@
 #include "CATIABody.h"
 #include "CATIAReferences.h"
 #include "CATIAReference.h"
+#include "CATIAProduct.h"
+#include "CATIAAnalyze.h"
 #include "CATIAIntParam.h"
 #include "CATIALinearRepartition.h"
 #include "CATIAAngularRepartition.h"
@@ -2504,6 +2506,13 @@ static std::string BstrToUtf8(const CATBSTR value)
   return std::string(&buffer[0], static_cast<size_t>(byte_length));
 }
 
+static std::string DoubleToPropertyText(double value)
+{
+  std::ostringstream text;
+  text << std::setprecision(15) << value;
+  return text.str();
+}
+
 // 用途：从 CATIALength 的真实 Value 属性读取毫米数；调用者负责接口引用生命周期。
 static bool ReadLengthValue(CATIALength* length, double& value)
 {
@@ -3315,6 +3324,262 @@ static bool ReadProductAbsTransform(CATIProduct* product, ProductInstanceRecord&
   return true;
 }
 
+static void AddCaaNodeProperty(ParseContext& context, const std::string& node_id,
+                               const char* tab_id, const char* tab_label,
+                               const char* group_id, const char* group_label,
+                               const char* field_key, const char* field_label,
+                               const std::string& value, const char* unit,
+                               const char* value_type, const char* source,
+                               long display_order)
+{
+  if (node_id.empty() || value.empty()) return;
+  std::vector<NodePropertyRecord>::const_iterator existing =
+    context.node_properties.begin();
+  for (; existing != context.node_properties.end(); ++existing)
+  {
+    if (existing->node_id == node_id &&
+        existing->tab_id == (tab_id ? tab_id : "") &&
+        existing->group_id == (group_id ? group_id : "") &&
+        existing->field_key == (field_key ? field_key : ""))
+      return;
+  }
+  NodePropertyRecord property;
+  property.node_id = node_id;
+  property.tab_id = tab_id ? tab_id : "";
+  property.tab_label = tab_label ? tab_label : "";
+  property.group_id = group_id ? group_id : "";
+  property.group_label = group_label ? group_label : "";
+  property.field_key = field_key ? field_key : "";
+  property.field_label = field_label ? field_label : "";
+  property.value = value;
+  property.unit = unit ? unit : "";
+  property.value_type = value_type ? value_type : "string";
+  property.source = source ? source : "CATIA";
+  property.display_order = display_order;
+  property.read_only = true;
+  context.node_properties.push_back(property);
+}
+
+static std::string ProductSourceText(CatProductSource source)
+{
+  if (source == catProductMade) return "made";
+  if (source == catProductBought) return "bought";
+  return "unknown";
+}
+
+static bool ReadAnalyzeVector(CATIAAnalyze* analyze, bool gravity_center,
+                              double* output, int expected_count)
+{
+  if (!analyze || !output || expected_count <= 0) return false;
+  CATSafeArrayVariant* array = SafeArrayCreateVector(VT_VARIANT, 0, expected_count);
+  if (!array) return false;
+  HRESULT read_result = E_FAIL;
+  try
+  {
+    read_result = gravity_center ? analyze->GetGravityCenter(*array) :
+      analyze->GetInertia(*array);
+  }
+  catch (...)
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  if (FAILED(read_result))
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  CATVariant* values = 0;
+  if (FAILED(SafeArrayAccessData(array, reinterpret_cast<void**>(&values))) || !values)
+  {
+    SafeArrayDestroy(array);
+    return false;
+  }
+  bool valid = true;
+  int index = 0;
+  for (; index < expected_count; ++index)
+    if (!VariantToDouble(values[index], output[index])) valid = false;
+  SafeArrayUnaccessData(array);
+  SafeArrayDestroy(array);
+  return valid;
+}
+
+static void AddAutomationBstrProperty(ParseContext& context, const std::string& node_id,
+                                      CATIAProduct* product, const char* field_key,
+                                      const char* field_label, long display_order,
+                                      HRESULT (__stdcall CATIAProduct::*getter)(CATBSTR&))
+{
+  if (!product || !getter) return;
+  CaaBstrGuard value;
+  try
+  {
+    if (SUCCEEDED((product->*getter)(value.Out())))
+      AddCaaNodeProperty(context, node_id, "product", "\xE4\xBA\xA7\xE5\x93\x81",
+                         "product_identity", "\xE4\xBA\xA7\xE5\x93\x81",
+                         field_key, field_label, BstrToUtf8(value.Get()), "",
+                         "string", "CATIAProduct", display_order);
+  }
+  catch (...) {}
+}
+
+static void AddProductAutomationPropertiesForNode(ParseContext& context,
+                                                  const std::string& node_id,
+                                                  CATIAProduct* automation_product,
+                                                  const ProductInstanceRecord& instance)
+{
+  if (!automation_product || node_id.empty()) return;
+  AddCaaNodeProperty(context, node_id, "product", "\xE4\xBA\xA7\xE5\x93\x81",
+                     "product_identity", "\xE4\xBA\xA7\xE5\x93\x81", "instance_name",
+                     "\xE5\xAE\x9E\xE4\xBE\x8B\xE5\x90\x8D\xE7\xA7\xB0",
+                     instance.instance_name, "", "string", "CATIProduct", 1);
+  AddAutomationBstrProperty(context, node_id, automation_product, "part_number",
+                            "\xE9\x9B\xB6\xE4\xBB\xB6\xE7\xBC\x96\xE5\x8F\xB7",
+                            2, &CATIAProduct::get_PartNumber);
+  AddAutomationBstrProperty(context, node_id, automation_product, "revision",
+                            "\xE7\x89\x88\xE6\x9C\xAC",
+                            3, &CATIAProduct::get_Revision);
+  AddAutomationBstrProperty(context, node_id, automation_product, "definition",
+                            "\xE5\xAE\x9A\xE4\xB9\x89",
+                            4, &CATIAProduct::get_Definition);
+  AddAutomationBstrProperty(context, node_id, automation_product, "nomenclature",
+                            "\xE6\x9C\xAF\xE8\xAF\xAD",
+                            5, &CATIAProduct::get_Nomenclature);
+  AddAutomationBstrProperty(context, node_id, automation_product, "description_ref",
+                            "\xE5\x8F\x82\xE8\x80\x83\xE6\x8F\x8F\xE8\xBF\xB0",
+                            7, &CATIAProduct::get_DescriptionRef);
+  AddAutomationBstrProperty(context, node_id, automation_product, "description_inst",
+                            "\xE5\xAE\x9E\xE4\xBE\x8B\xE6\x8F\x8F\xE8\xBF\xB0",
+                            8, &CATIAProduct::get_DescriptionInst);
+  try
+  {
+    CatProductSource source = catProductSourceUnknown;
+    if (SUCCEEDED(automation_product->get_Source(source)))
+      AddCaaNodeProperty(context, node_id, "product", "\xE4\xBA\xA7\xE5\x93\x81",
+                         "product_identity", "\xE4\xBA\xA7\xE5\x93\x81",
+                         "source", "\xE6\x9D\xA5\xE6\xBA\x90",
+                         ProductSourceText(source), "", "enum", "CATIAProduct", 6);
+  }
+  catch (...) {}
+}
+
+static void AddProductAnalyzePropertiesForNode(ParseContext& context,
+                                               const std::string& node_id,
+                                               CATIAProduct* automation_product)
+{
+  if (!automation_product || node_id.empty()) return;
+  try { automation_product->ApplyWorkMode(DESIGN_MODE); } catch (...) {}
+  try { automation_product->ActivateDefaultShape(); } catch (...) {}
+  try { automation_product->Update(); } catch (...) {}
+  CaaInterfaceGuard<CATIAAnalyze> analyze_guard;
+  try
+  {
+    if (FAILED(automation_product->get_Analyze(analyze_guard.Out())) ||
+        !analyze_guard.Get()) return;
+  }
+  catch (...) { return; }
+
+  double scalar = 0.0;
+  try
+  {
+    if (SUCCEEDED(analyze_guard.Get()->get_Volume(scalar)))
+      AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                         "mass_general", "\xE7\x89\xB9\xE6\x80\xA7", "volume",
+                         "\xE4\xBD\x93\xE7\xA7\xAF", DoubleToPropertyText(scalar),
+                         "m3", "volume", "CATIAAnalyze", 1);
+    if (SUCCEEDED(analyze_guard.Get()->get_Mass(scalar)))
+      AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                         "mass_general", "\xE7\x89\xB9\xE6\x80\xA7", "mass",
+                         "\xE8\xB4\xA8\xE9\x87\x8F", DoubleToPropertyText(scalar),
+                         "kg", "mass", "CATIAAnalyze", 2);
+    if (SUCCEEDED(analyze_guard.Get()->get_WetArea(scalar)))
+      AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                         "mass_general", "\xE7\x89\xB9\xE6\x80\xA7", "wet_area",
+                         "\xE6\x9B\xB2\xE9\x9D\xA2\xE9\x9D\xA2\xE7\xA7\xAF",
+                         DoubleToPropertyText(scalar / 1000000.0),
+                         "m2", "area", "CATIAAnalyze", 3);
+  }
+  catch (...) {}
+
+  double center[3] = { 0.0, 0.0, 0.0 };
+  if (ReadAnalyzeVector(analyze_guard.Get(), true, center, 3))
+  {
+    const char* keys[3] = { "center_x", "center_y", "center_z" };
+    const char* labels[3] = { "x", "y", "z" };
+    int index = 0;
+    for (; index < 3; ++index)
+      AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                         "center_of_gravity", "\xE6\x83\xAF\xE6\x80\xA7\xE4\xB8\xAD\xE5\xBF\x83",
+                         keys[index], labels[index], DoubleToPropertyText(center[index]),
+                         "mm", "length", "CATIAAnalyze", 20 + index);
+  }
+
+  double inertia[9] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+  if (ReadAnalyzeVector(analyze_guard.Get(), false, inertia, 9))
+  {
+    const char* keys[9] = {
+      "ixx", "ixy", "ixz", "iyx", "iyy", "iyz", "izx", "izy", "izz"
+    };
+    const char* labels[9] = {
+      "Ixx", "Ixy", "Ixz", "Iyx", "Iyy", "Iyz", "Izx", "Izy", "Izz"
+    };
+    int index = 0;
+    for (; index < 9; ++index)
+      AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                         "inertia_matrix", "\xE6\x83\xAF\xE6\x80\xA7\xE7\x9F\xA9\xE9\x98\xB5",
+                         keys[index], labels[index],
+                         DoubleToPropertyText(inertia[index] / 1000000.0),
+                         "kgxm2", "inertia", "CATIAAnalyze", 40 + index);
+  }
+}
+
+static void EnrichProductNodeProperties(CATIProduct* product,
+                                        CATIProduct* reference_product,
+                                        ParseContext& context,
+                                        const ProductInstanceRecord& instance)
+{
+  CATIAProduct* instance_automation = 0;
+  CATIAProduct* reference_automation = 0;
+  try
+  {
+    if (product)
+      product->QueryInterface(IID_CATIAProduct,
+                              reinterpret_cast<void**>(&instance_automation));
+  }
+  catch (...) { instance_automation = 0; }
+  try
+  {
+    if (reference_product)
+      reference_product->QueryInterface(IID_CATIAProduct,
+                                        reinterpret_cast<void**>(&reference_automation));
+  }
+  catch (...) { reference_automation = 0; }
+  if (!instance_automation && !reference_automation)
+  {
+    context.AddDiagnostic("info", "product_properties",
+                          "PRODUCT_AUTOMATION_PROPERTIES_UNAVAILABLE",
+                          "CATIProduct did not expose CATIAProduct Automation properties",
+                          instance.instance_id);
+    return;
+  }
+  CaaInterfaceGuard<CATIAProduct> instance_guard(instance_automation);
+  CaaInterfaceGuard<CATIAProduct> reference_guard(reference_automation);
+  CATIAProduct* product_properties = instance_guard.Get() ? instance_guard.Get() :
+    reference_guard.Get();
+  CATIAProduct* analyze_product = reference_guard.Get() ? reference_guard.Get() :
+    instance_guard.Get();
+  std::vector<std::string> node_ids;
+  node_ids.push_back(std::string("instance:") + instance.instance_id);
+  node_ids.push_back(std::string("instance:") + instance.instance_id +
+                     "/reference:" + instance.reference_id);
+  std::vector<std::string>::const_iterator node_id = node_ids.begin();
+  for (; node_id != node_ids.end(); ++node_id)
+  {
+    AddProductAutomationPropertiesForNode(context, *node_id, product_properties,
+                                          instance);
+    AddProductAnalyzePropertiesForNode(context, *node_id, analyze_product);
+  }
+}
+
 static void CrawlProductInstance(CATIProduct* product, ParseContext& context,
                                  const std::string& source_document,
                                  const std::string& parent_instance_id,
@@ -3363,6 +3628,7 @@ static void CrawlProductInstance(CATIProduct* product, ParseContext& context,
   try { instance.child_count = product->GetChildrenCount(); }
   catch (...) { instance.child_count = 0; }
   MountProductReferenceSpecTree(product, reference_ptr, context, instance);
+  EnrichProductNodeProperties(product, reference_ptr, context, instance);
   context.product_instances.push_back(instance);
   const std::string current_id = instance.instance_id;
 
