@@ -351,7 +351,7 @@ async def _build_feature_center(
     native_feature_count = 0
     if native_bundle is not None and (native_bundle / "features.jsonl").is_file():
         native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
-    _publish_native_tree_assets(native_bundle, source_file.name)
+    _publish_native_tree_assets(native_bundle, step_path.name)
     native_assets = _available_native_assets(native_bundle)
     recognized_feature_count = _count_jsonl_records(bundle / "canonical_features.jsonl")
     feature_face_mapping_count = _count_jsonl_records(bundle / "feature_geometry_links.jsonl")
