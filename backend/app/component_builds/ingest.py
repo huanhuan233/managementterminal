@@ -25,6 +25,11 @@ from app.cad.service import CadService
 from app.component_builds.catia_worker import CatiaWorkerClient, CatiaWorkerError
 from app.core.config import REPOSITORY_ROOT, Settings
 from app.db.session import SessionLocal
+from app.feature_center.native_tree import (
+    NativeTreeJsonError,
+    build_native_tree_from_bundle,
+    write_jsonl,
+)
 
 
 @dataclass(frozen=True)
@@ -346,6 +351,7 @@ async def _build_feature_center(
     native_feature_count = 0
     if native_bundle is not None and (native_bundle / "features.jsonl").is_file():
         native_feature_count = _count_jsonl_records(native_bundle / "features.jsonl")
+    _publish_native_tree_assets(native_bundle, source_file.name)
     native_assets = _available_native_assets(native_bundle)
     recognized_feature_count = _count_jsonl_records(bundle / "canonical_features.jsonl")
     feature_face_mapping_count = _count_jsonl_records(bundle / "feature_geometry_links.jsonl")
@@ -441,6 +447,9 @@ def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
         "feature_topology_links": "native_feature_topology_links.jsonl",
         "product_references": "product_references.jsonl",
         "product_instances": "product_instances.jsonl",
+        "native_tree_nodes": "native_tree_nodes.jsonl",
+        "node_properties": "node_properties.jsonl",
+        "native_tree_diagnostics": "native_tree_diagnostics.jsonl",
         "capabilities": "capabilities.json",
     }
     return {
@@ -448,6 +457,25 @@ def _available_native_assets(native_bundle: Path | None) -> dict[str, str]:
         for key, file_name in candidates.items()
         if (native_bundle / file_name).is_file()
     }
+
+
+def _publish_native_tree_assets(native_bundle: Path | None, source_file_name: str) -> None:
+    if native_bundle is None or not native_bundle.is_dir():
+        return
+    diagnostics_path = native_bundle / "native_tree_diagnostics.jsonl"
+    try:
+        result = build_native_tree_from_bundle(native_bundle, source_file_name)
+        write_jsonl(native_bundle / "native_tree_nodes.jsonl", result.nodes)
+        write_jsonl(native_bundle / "node_properties.jsonl", result.properties)
+        write_jsonl(diagnostics_path, result.diagnostics)
+    except NativeTreeJsonError as exc:
+        write_jsonl(diagnostics_path, [{
+            "diagnostic_id": "NATIVE_TREE_JSON_INVALID",
+            "severity": "error",
+            "message": str(exc),
+            "file_name": exc.file_name,
+            "line_number": exc.line_number,
+        }])
 
 
 # 用途：重试时只清理本任务生成物，保留上传源文件和持久化任务记录。

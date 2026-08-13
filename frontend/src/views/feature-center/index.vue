@@ -17,13 +17,12 @@ import OrientationGizmo from './modules/OrientationGizmo.vue';
 import type { GizmoAxisPoint } from './modules/OrientationGizmo.vue';
 import { registerCadPickables, resolveCadSelection } from './modules/cad-selection';
 import type { CadSelectionTarget } from './modules/cad-selection';
-import { buildNativeFeatureTree, flattenFeatureTree } from './modules/native-feature-tree';
-import type { FeatureTreeNode, NativeFeatureRecord } from './modules/native-feature-tree';
+import { buildNativeFeatureTree, buildUnifiedNativeTree, flattenFeatureTree } from './modules/native-feature-tree';
+import type { FeatureTreeNode, NativeFeatureRecord, NativeTreeRecord } from './modules/native-feature-tree';
 import {
   clearViewerSelection,
   emptySelectionContext,
-  resolveViewerSelection,
-  selectionPrimaryId
+  resolveViewerSelection
 } from './modules/viewer-selection';
 import type {
   SelectionTarget,
@@ -77,6 +76,22 @@ interface FaceMeshMap {
   primitive_to_face: Record<string, string>;
 }
 
+interface NodePropertyRecord {
+  node_id: string;
+  tab_id: string;
+  tab_label: string;
+  group_id: string;
+  group_label: string;
+  field_key: string;
+  field_label: string;
+  value: unknown;
+  unit?: string;
+  value_type?: string;
+  source?: string;
+  display_order?: number;
+  read_only?: boolean;
+}
+
 type GeometryCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
 
 interface GeometryTreeNode {
@@ -94,6 +109,8 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const contract = ref<Api.ComponentBuild.ViewerContract | null>(null);
 const canonicalFeatures = ref<CanonicalFeatureRecord[]>([]);
 const nativeFeatures = ref<NativeFeatureRecord[]>([]);
+const nativeTreeRecords = ref<NativeTreeRecord[]>([]);
+const nodeProperties = ref<NodePropertyRecord[]>([]);
 const topologyFaces = ref<TopologyFaceRecord[]>([]);
 const topologyBodies = ref<TopologySelectionRecord[]>([]);
 const topologySolids = ref<TopologySelectionRecord[]>([]);
@@ -110,6 +127,9 @@ const selectedFeatureId = ref('');
 const selectedNativeFeatureId = ref('');
 // 用途：记录左侧规格树当前行，分组节点也能保留视觉选中状态而不被当成真实 Feature。
 const selectedNativeTreeNodeId = ref('');
+const selectedNativeTreeNodeExplicit = ref<FeatureTreeNode | null>(null);
+const propertiesDialogOpen = ref(false);
+const propertiesDialogNode = ref<FeatureTreeNode | null>(null);
 const selectedFaceId = ref('');
 const selectedBomNode = ref<Api.ComponentBuild.ViewerBomNode | null>(null);
 const faceFeatureIds = ref<string[]>([]);
@@ -204,12 +224,19 @@ const nativeFaceRefs = computed(() => {
   return index;
 });
 const nativeTreeNodes = computed(() =>
-  buildNativeFeatureTree(nativeFeatures.value, contract.value?.summary.source_file_name || '', nativeFaceRefs.value)
+  nativeTreeRecords.value.length
+    ? buildUnifiedNativeTree(nativeTreeRecords.value)
+    : buildNativeFeatureTree(nativeFeatures.value, contract.value?.summary.source_file_name || '', nativeFaceRefs.value)
 );
 const nativeTreeNodeIndex = computed(
   () => new Map(flattenFeatureTree(nativeTreeNodes.value).map(node => [node.id, node]))
 );
-const selectedNativeTreeNode = computed(() => nativeTreeNodeIndex.value.get(selectedNativeFeatureId.value) ?? null);
+const selectedNativeTreeNode = computed(() =>
+  selectedNativeTreeNodeExplicit.value ||
+  nativeTreeNodeIndex.value.get(selectedNativeTreeNodeId.value) ||
+  nativeTreeNodeIndex.value.get(selectedNativeFeatureId.value) ||
+  null
+);
 const selectedNativeTreeParent = computed(() => {
   const parentId = selectedNativeTreeNode.value?.parentId;
   return parentId ? (nativeTreeNodeIndex.value.get(parentId) ?? null) : null;
@@ -226,6 +253,25 @@ const selectedNativeParameterFamily = computed(() => {
   return String(payload?.family || selectedNativeFeature.value?.payload_type || '');
 });
 const selectedNativeFaces = computed(() => nativeFaceRefs.value[selectedNativeFeatureId.value] || []);
+const selectedNodeProperties = computed(() => propertiesForNode(propertiesDialogNode.value || selectedNativeTreeNode.value));
+const propertyTabs = computed(() => {
+  const tabs = new Map<string, { tab_id: string; tab_label: string; groups: Array<{ group_id: string; group_label: string; fields: NodePropertyRecord[] }> }>();
+  for (const property of selectedNodeProperties.value) {
+    const tab = tabs.get(property.tab_id) || { tab_id: property.tab_id, tab_label: property.tab_label, groups: [] };
+    let group = tab.groups.find(item => item.group_id === property.group_id);
+    if (!group) {
+      group = { group_id: property.group_id, group_label: property.group_label, fields: [] };
+      tab.groups.push(group);
+    }
+    group.fields.push(property);
+    tabs.set(property.tab_id, tab);
+  }
+  for (const tab of tabs.values()) {
+    tab.groups.sort((left, right) => left.group_label.localeCompare(right.group_label));
+    tab.groups.forEach(group => group.fields.sort((left, right) => Number(left.display_order || 0) - Number(right.display_order || 0)));
+  }
+  return Array.from(tabs.values());
+});
 const filteredFaces = computed(() => {
   const keyword = geometryKeyword.value.trim().toLowerCase();
   const source = keyword
@@ -331,6 +377,18 @@ function formatNativeAttribute(value: unknown) {
 }
 
 // 用途：从特征关联面跳到几何拓扑并复用现有 Face 反查与 Viewer 高亮。
+function rgbPreview(value: unknown) {
+  if (Array.isArray(value) && value.length >= 3) {
+    return `rgb(${Number(value[0]) || 0}, ${Number(value[1]) || 0}, ${Number(value[2]) || 0})`;
+  }
+  if (typeof value === 'string') {
+    const values = value.match(/\d+(?:\.\d+)?/gu)?.slice(0, 3).map(Number) || [];
+    if (values.length === 3) return `rgb(${values[0]}, ${values[1]}, ${values[2]})`;
+    if (/^#[0-9a-f]{6}$/iu.test(value)) return value;
+  }
+  return 'transparent';
+}
+
 function openNativeFace(faceId: string) {
   activeTab.value = 'geometry';
   selectFace(faceId);
@@ -485,6 +543,8 @@ async function retryBuild() {
 // 用途：并行读取原生 CAA Feature 与 B-Rep Face；缺失代表数据能力降级，不伪造内容。
 async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.ViewerContract) {
   nativeFeatures.value = [];
+  nativeTreeRecords.value = [];
+  nodeProperties.value = [];
   topologyFaces.value = [];
   topologyBodies.value = [];
   topologySolids.value = [];
@@ -494,6 +554,8 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
   topologyVertices.value = [];
   selectionIndex.value = null;
   const nativeUrl = viewerContract.native_semantics?.features_url;
+  const nativeTreeUrl = viewerContract.native_semantics?.native_tree_nodes_url;
+  const nodePropertiesUrl = viewerContract.native_semantics?.node_properties_url;
   const facesUrl = viewerContract.feature_center.topology_faces_url;
   const selectionIndexUrl = viewerContract.viewer_asset?.selection_index_url;
   const requests: Promise<void>[] = [];
@@ -516,6 +578,20 @@ async function loadOptionalSemanticAssets(viewerContract: Api.ComponentBuild.Vie
     requests.push(
       fetchAsset(nativeUrl).then(buffer => {
         nativeFeatures.value = parseJsonLines<NativeFeatureRecord>(new TextDecoder().decode(buffer));
+      })
+    );
+  }
+  if (nativeTreeUrl) {
+    requests.push(
+      fetchAsset(nativeTreeUrl).then(buffer => {
+        nativeTreeRecords.value = parseJsonLines<NativeTreeRecord>(new TextDecoder().decode(buffer));
+      })
+    );
+  }
+  if (nodePropertiesUrl) {
+    requests.push(
+      fetchAsset(nodePropertiesUrl).then(buffer => {
+        nodeProperties.value = parseJsonLines<NodePropertyRecord>(new TextDecoder().decode(buffer));
       })
     );
   }
@@ -696,6 +772,9 @@ function clearSelection() {
   selectedFeatureId.value = '';
   selectedNativeFeatureId.value = '';
   selectedNativeTreeNodeId.value = '';
+  selectedNativeTreeNodeExplicit.value = null;
+  propertiesDialogOpen.value = false;
+  propertiesDialogNode.value = null;
   selectedFaceId.value = '';
   selectedBomNode.value = null;
   selectedBomPrimitiveIds.value = [];
@@ -738,14 +817,75 @@ function selectNativeFeature(feature: NativeFeatureRecord) {
 // 用途：规格树分组节点只参与导航；真实 Feature 节点继续复用原有选择和关联面高亮链路。
 function selectNativeTreeNode(node: FeatureTreeNode) {
   selectedNativeTreeNodeId.value = node.id;
-  if (node.raw) {
-    selectNativeFeature(node.raw);
+  selectedNativeTreeNodeExplicit.value = node;
+  if (node.featureId) {
+    selectedNativeFeatureId.value = node.featureId;
+    selectionTarget.value = {
+      source: 'catia',
+      kind: 'feature',
+      stableId: node.id,
+      featureId: node.featureId,
+      instanceId: node.instanceId,
+      partId: contract.value?.part_id,
+      displayName: node.displayName,
+      sourceRef: node.sourceRef,
+      raw: node.raw
+    };
+    selectTarget({ kind: 'native_feature', id: node.featureId, label: node.displayName, raw: node.raw }, 'native_feature');
+    if (node.faceRefs.length) {
+      viewerSelection.value.context.nativeFaceIds = [...node.faceRefs];
+      viewerSelection.value.context.renderFaceIds = [...node.faceRefs];
+      viewerSelection.value.context.mappingStatus = 'runtime_current_revision';
+      viewerSelection.value.context.mappingAuthority = 'native_tree_nodes';
+      selectedBomPrimitiveIds.value = [...viewerSelection.value.context.primitiveIds];
+      faceFeatureIds.value = [...viewerSelection.value.context.recognizedFeatureIds];
+      applyVisualState();
+    }
+    if (propertiesForNode(node).length) openPropertiesForNode(node);
     return;
+  }
+  if (node.instanceId) {
+    const bomNode = findBomNode(contract.value?.bom.nodes || [], node.id.replace(/^instance:/u, '')) ||
+      findBomNode(contract.value?.bom.nodes || [], node.id);
+    if (bomNode) {
+      selectBom(bomNode);
+      selectedNativeTreeNodeId.value = node.id;
+      selectedNativeTreeNodeExplicit.value = node;
+      return;
+    }
   }
   viewerSelection.value = clearViewerSelection();
   projectSelectionForExistingTemplate();
   selectionTarget.value = null;
+  if (propertiesForNode(node).length) openPropertiesForNode(node);
   applyVisualState();
+}
+
+function propertiesForNode(node: FeatureTreeNode | null) {
+  if (!node) return [];
+  const ids = new Set([
+    node.id,
+    node.sourceNodeId || '',
+    node.featureId ? `feature:${node.featureId}` : '',
+    node.instanceId ? `instance:${node.instanceId}` : ''
+  ].filter(Boolean));
+  return nodeProperties.value.filter(property => ids.has(property.node_id));
+}
+
+function openPropertiesForNode(node: FeatureTreeNode) {
+  const properties = propertiesForNode(node);
+  if (!properties.length) {
+    ElMessage.info('该节点没有可显示属性');
+    return;
+  }
+  propertiesDialogNode.value = node;
+  propertiesDialogOpen.value = true;
+}
+
+function notifyMissingProperties(node: FeatureTreeNode) {
+  selectedNativeTreeNodeId.value = node.id;
+  selectedNativeTreeNodeExplicit.value = node;
+  ElMessage.info('该节点没有可显示属性');
 }
 
 // 用途：选择真实 BOM 节点并使用后端提供的 Primitive 映射；单零件根节点可代表完整模型。
@@ -1349,10 +1489,13 @@ onBeforeUnmount(() => {
               <NativeFeatureTree
                 v-show="featureSubTab === 'native'"
                 :records="nativeFeatures"
+                :native-tree-records="nativeTreeRecords"
                 :source-file-name="contract?.summary.source_file_name || ''"
                 :selected-id="selectedNativeTreeNodeId"
                 :face-refs-by-feature-id="nativeFaceRefs"
                 @select="selectNativeTreeNode"
+                @open-properties="openPropertiesForNode"
+                @missing-properties="notifyMissingProperties"
               />
               <div v-show="featureSubTab === 'recognized'" class="recognized-feature-list">
                 <button
@@ -1622,6 +1765,31 @@ onBeforeUnmount(() => {
               {{ selectionContext.diagnostics.join('; ') }}
             </p>
           </section>
+          <section v-if="selectedNativeTreeNode" class="detail-section">
+            <h4>CATIA 节点</h4>
+            <dl>
+              <dt>显示名称</dt>
+              <dd>{{ selectedNativeTreeNode.displayName }}</dd>
+              <dt>节点类型</dt>
+              <dd>{{ selectedNativeTreeNode.nodeKind || selectedNativeTreeNode.kind }}</dd>
+              <dt>CATIA 类型</dt>
+              <dd>{{ selectedNativeTreeNode.nativeType || '未提供' }}</dd>
+              <dt>内部名称</dt>
+              <dd>{{ selectedNativeTreeNode.raw?.internal_name || selectedNativeTreeNode.name || '未提供' }}</dd>
+              <dt>实例 ID</dt>
+              <dd>{{ selectedNativeTreeNode.instanceId || '未提供' }}</dd>
+              <dt>Reference ID</dt>
+              <dd>{{ selectedNativeTreeNode.referenceId || '未提供' }}</dd>
+              <dt>Feature ID</dt>
+              <dd>{{ selectedNativeTreeNode.featureId || '未提供' }}</dd>
+              <dt>树路径</dt>
+              <dd>{{ selectedNativeTreeNode.sourceRef || '未提供' }}</dd>
+              <dt>属性状态</dt>
+              <dd>{{ propertiesForNode(selectedNativeTreeNode).length ? '可用' : '无属性' }}</dd>
+              <dt>几何映射</dt>
+              <dd>{{ selectedNativeTreeNode.hasGeometry ? '可用' : '未映射' }}</dd>
+            </dl>
+          </section>
           <section v-if="hasDetailGroup('positioning') && detailNode" class="detail-section">
             <h4>装配定位</h4>
             <dl v-if="detailNode.instance_name || detailNode.constraint_status || detailNode.constraint_count != null">
@@ -1720,6 +1888,51 @@ onBeforeUnmount(() => {
         </div>
       </aside>
     </main>
+    <ElDialog
+      v-model="propertiesDialogOpen"
+      class="catia-properties-dialog"
+      width="680px"
+      draggable
+      append-to-body
+      title="CATIA 属性"
+    >
+      <div class="property-current">
+        <strong>当前选择</strong>
+        <span>{{ propertiesDialogNode?.displayName || selectedNativeTreeNode?.displayName || '未选择' }}</span>
+      </div>
+      <ElTabs v-if="propertyTabs.length" type="card">
+        <ElTabPane v-for="tab in propertyTabs" :key="tab.tab_id" :label="tab.tab_label" :name="tab.tab_id">
+          <section v-for="group in tab.groups" :key="group.group_id" class="property-group">
+            <h4>{{ group.group_label }}</h4>
+            <div v-if="tab.tab_id === 'mass' && group.group_id === 'inertia_matrix'" class="inertia-matrix">
+              <span v-for="field in group.fields" :key="field.field_key">
+                {{ field.field_label }} {{ formatNativeAttribute(field.value) }}{{ field.unit || '' }}
+              </span>
+            </div>
+            <dl v-else>
+              <template v-for="field in group.fields" :key="field.field_key">
+                <dt>{{ field.field_label || field.field_key }}</dt>
+                <dd>
+                  <span
+                    v-if="field.field_key.toLowerCase().includes('rgb') || field.field_key.toLowerCase().includes('color')"
+                    class="rgb-swatch"
+                    :style="{ background: rgbPreview(field.value) }"
+                  />
+                  {{ formatNativeAttribute(field.value) }}{{ field.unit ? ` ${field.unit}` : '' }}
+                </dd>
+              </template>
+            </dl>
+          </section>
+        </ElTabPane>
+      </ElTabs>
+      <ElEmpty v-else description="该节点没有可显示属性" />
+      <template #footer>
+        <button type="button" @click="propertiesDialogOpen = false">确定</button>
+        <button type="button" disabled>应用</button>
+        <button type="button" @click="propertiesDialogOpen = false">关闭</button>
+        <button type="button">更多</button>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
@@ -2187,6 +2400,68 @@ button:disabled {
   overflow: auto;
   white-space: pre-wrap;
   font-size: 11px;
+}
+.catia-properties-dialog :deep(.el-dialog) {
+  background: #f2e7c8;
+}
+.catia-properties-dialog :deep(.el-dialog__header) {
+  border-bottom: 1px solid #cdbd96;
+  margin-right: 0;
+}
+.property-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #cdbd96;
+  border-radius: 6px;
+  background: #fff8df;
+  padding: 9px 12px;
+}
+.property-group {
+  border: 1px solid #d8c9a4;
+  border-radius: 6px;
+  background: #fffaf0;
+  margin: 10px 0;
+  padding: 10px;
+}
+.property-group h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.property-group dl {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+.property-group dt {
+  color: #5d5340;
+}
+.property-group dd {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rgb-swatch {
+  width: 20px;
+  height: 14px;
+  flex: 0 0 20px;
+  border: 1px solid #8d8267;
+  border-radius: 3px;
+}
+.inertia-matrix {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.inertia-matrix span {
+  border: 1px solid #d8c9a4;
+  border-radius: 4px;
+  background: #fff;
+  padding: 6px;
 }
 .details-trigger {
   display: none;

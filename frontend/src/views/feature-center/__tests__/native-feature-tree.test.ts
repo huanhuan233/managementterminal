@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildNativeFeatureTree,
+  buildUnifiedNativeTree,
   flattenFeatureTree,
   projectFeatureTree,
   splitHighlight
 } from '../modules/native-feature-tree';
-import type { NativeFeatureRecord } from '../modules/native-feature-tree';
+import type { NativeFeatureRecord, NativeTreeRecord } from '../modules/native-feature-tree';
 
 const records: NativeFeatureRecord[] = [
   { feature_id: 'F1', traversal_index: 1, native_type: 'CATDocument', display_name: 'D:\\secret\\source.CATPart' },
@@ -100,4 +101,68 @@ test('命中父节点时不会把默认隐藏的技术后代重新带回结果',
     flattenFeatureTree(result.nodes).some(node => node.id === 'F5'),
     false
   );
+});
+
+test('CATProduct unified tree keeps repeated instances and cloned feature ids unique', () => {
+  const unified: NativeTreeRecord[] = [
+    {
+      id: 'document:catproduct',
+      label: 'Asm.CATProduct',
+      node_kind: 'document',
+      document_kind: 'catproduct',
+      children: [
+        {
+          id: 'instance:I1',
+          label: 'Part.1',
+          node_kind: 'product_instance',
+          document_kind: 'catproduct',
+          instance_id: 'I1',
+          reference_id: 'R1',
+          children: [
+            {
+              id: 'instance:I1/feature:F10',
+              label: 'Hole.1',
+              node_kind: 'native_feature',
+              document_kind: 'catpart',
+              instance_id: 'I1',
+              reference_id: 'R1',
+              feature_id: 'F10',
+              startup_type: 'Hole',
+              has_properties: true,
+              selection: { mesh_face_ids: ['Face_12'], topology_ids: ['TopoFace_12'] }
+            }
+          ]
+        },
+        {
+          id: 'instance:I2',
+          label: 'Part.2',
+          node_kind: 'product_instance',
+          document_kind: 'catproduct',
+          instance_id: 'I2',
+          reference_id: 'R1',
+          children: [
+            {
+              id: 'instance:I2/feature:F10',
+              label: 'Hole.1',
+              node_kind: 'native_feature',
+              document_kind: 'catpart',
+              instance_id: 'I2',
+              reference_id: 'R1',
+              feature_id: 'F10',
+              startup_type: 'Hole'
+            }
+          ]
+        }
+      ]
+    }
+  ];
+
+  const nodes = flattenFeatureTree(buildUnifiedNativeTree(unified));
+
+  assert.deepEqual(
+    nodes.filter(node => node.featureId === 'F10').map(node => node.id),
+    ['instance:I1/feature:F10', 'instance:I2/feature:F10']
+  );
+  assert.equal(nodes.find(node => node.id === 'instance:I1/feature:F10')?.hasProperties, true);
+  assert.deepEqual(nodes.find(node => node.id === 'instance:I1/feature:F10')?.faceRefs, ['Face_12']);
 });

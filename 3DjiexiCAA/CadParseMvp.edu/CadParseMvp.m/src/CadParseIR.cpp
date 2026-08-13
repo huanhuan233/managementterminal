@@ -106,6 +106,19 @@ void WriteStringMap(std::ostream& output, const std::map<std::string, std::strin
   output << '}';
 }
 
+// 用途：把 double 数组按原始顺序写成 JSON number 数组。
+void WriteDoubleArray(std::ostream& output, const std::vector<double>& values)
+{
+  output << '[';
+  std::vector<double>::const_iterator it = values.begin();
+  for (; it != values.end(); ++it)
+  {
+    if (it != values.begin()) output << ',';
+    output << std::setprecision(15) << *it;
+  }
+  output << ']';
+}
+
 // 用途：把稳定排序的 string→long map 写成 JSON 对象。
 void WriteCountMap(std::ostream& output, const std::map<std::string, long>& values)
 {
@@ -921,6 +934,246 @@ static CapabilityEvaluation MakeCapability(const char* name, const char* status,
   return item;
 }
 
+static std::string DisplayTextForFeature(const FeatureRecord& feature)
+{
+  if (!feature.fingerprint.display_name.empty()) return feature.fingerprint.display_name;
+  if (!feature.fingerprint.internal_name.empty()) return feature.fingerprint.internal_name;
+  if (!feature.fingerprint.startup_type.empty()) return feature.fingerprint.startup_type;
+  return feature.feature_id;
+}
+
+static bool FeatureHasTopology(const ParseContext& context, const std::string& feature_id)
+{
+  std::vector<NativeFeatureTopologyLinkRecord>::const_iterator link =
+    context.native_feature_topology_links.begin();
+  for (; link != context.native_feature_topology_links.end(); ++link)
+    if (link->source_feature_id == feature_id) return true;
+  std::vector<NativeTopologyBodyRecord>::const_iterator body = context.topology_bodies.begin();
+  for (; body != context.topology_bodies.end(); ++body)
+    if (body->source_feature_id == feature_id) return true;
+  return false;
+}
+
+static void CollectFeatureSelection(const ParseContext& context, const std::string& feature_id,
+                                    std::vector<std::string>& topology_ids,
+                                    std::vector<std::string>& mesh_face_ids)
+{
+  std::set<std::string> topology_seen;
+  std::set<std::string> mesh_seen;
+  std::vector<NativeFeatureTopologyLinkRecord>::const_iterator link =
+    context.native_feature_topology_links.begin();
+  for (; link != context.native_feature_topology_links.end(); ++link)
+  {
+    if (link->source_feature_id != feature_id) continue;
+    if (!link->final_cell_id.empty() && topology_seen.insert(link->final_cell_id).second)
+      topology_ids.push_back(link->final_cell_id);
+  }
+  std::vector<NativeMeshFaceMapRecord>::const_iterator mesh = context.mesh_face_maps.begin();
+  for (; mesh != context.mesh_face_maps.end(); ++mesh)
+  {
+    if (topology_seen.find(mesh->face_cell_id) != topology_seen.end() &&
+        !mesh->mesh_map_id.empty() && mesh_seen.insert(mesh->mesh_map_id).second)
+      mesh_face_ids.push_back(mesh->mesh_map_id);
+  }
+}
+
+static void BuildNativeTreeNodes(const std::vector<FeatureRecord>& features,
+                                 ParseContext& context)
+{
+  if (!context.native_tree_nodes.empty()) return;
+  long traversal = 0;
+  const bool is_product = !context.product_instances.empty();
+  const std::string document_kind = context.metadata.document_kind.empty() ?
+    (is_product ? "catproduct" : "catpart") : context.metadata.document_kind;
+
+  if (is_product)
+  {
+    NativeTreeNodeRecord root;
+    root.node_id = "product:root";
+    root.display_text = context.metadata.input_file_name.empty() ? "CATProduct" :
+      context.metadata.input_file_name;
+    root.display_name = root.display_text;
+    root.internal_name = root.display_text;
+    root.startup_type = "CATProduct";
+    root.document_kind = "catproduct";
+    root.node_kind = "catproduct";
+    root.tree_path = "/";
+    root.traversal_index = traversal++;
+    root.has_children = !context.product_instances.empty();
+    root.properties_available = true;
+    root.attributes["value_source"] = "CATIProduct";
+    context.native_tree_nodes.push_back(root);
+
+    std::vector<ProductInstanceRecord>::const_iterator instance =
+      context.product_instances.begin();
+    for (; instance != context.product_instances.end(); ++instance)
+    {
+      NativeTreeNodeRecord node;
+      node.node_id = std::string("instance:") + instance->instance_id;
+      node.parent_id = instance->parent_instance_id.empty() ? root.node_id :
+        std::string("instance:") + instance->parent_instance_id;
+      node.display_text = instance->instance_name.empty() ? instance->reference_id :
+        instance->instance_name;
+      node.display_name = node.display_text;
+      node.internal_name = instance->instance_name;
+      node.startup_type = "CATIProduct";
+      node.document_kind = "catproduct";
+      node.node_kind = instance->child_count > 0 ? "product_assembly" : "product_instance";
+      node.source_index = instance->child_index;
+      node.traversal_index = traversal++;
+      node.tree_path = instance->tree_path;
+      node.instance_id = instance->instance_id;
+      node.parent_instance_id = instance->parent_instance_id;
+      node.reference_id = instance->reference_id;
+      node.source_node_id = instance->instance_id;
+      node.has_children = instance->child_count > 0;
+      node.properties_available = true;
+      node.attributes["read_status"] = instance->read_status;
+      node.attributes["transform_status"] = instance->transform_status;
+      node.diagnostic_ids = instance->diagnostic_ids;
+      context.native_tree_nodes.push_back(node);
+    }
+    context.AddDiagnostic("info", "native_tree", "PRODUCT_REFERENCE_FEATURE_TREE_NOT_MOUNTED",
+                          "Product BOM is emitted; reference CATPart feature mounting requires validated reference document traversal",
+                          "product:root");
+    return;
+  }
+
+  std::map<std::string, bool> has_children;
+  std::vector<FeatureRecord>::const_iterator child = features.begin();
+  for (; child != features.end(); ++child)
+    if (!child->parent_id.empty()) has_children[child->parent_id] = true;
+
+  std::vector<FeatureRecord>::const_iterator feature = features.begin();
+  for (; feature != features.end(); ++feature)
+  {
+    NativeTreeNodeRecord node;
+    node.node_id = std::string("feature:") + feature->feature_id;
+    if (!feature->parent_id.empty())
+      node.parent_id = std::string("feature:") + feature->parent_id;
+    node.display_text = DisplayTextForFeature(*feature);
+    node.display_name = feature->fingerprint.display_name;
+    node.internal_name = feature->fingerprint.internal_name;
+    node.startup_type = feature->fingerprint.startup_type.empty() ?
+      feature->fingerprint.native_type : feature->fingerprint.startup_type;
+    node.document_kind = document_kind.empty() ? "catpart" : document_kind;
+    node.node_kind = feature->decode_level == "generic" ? "generic" :
+      (feature->decode_level == "opaque" ? "opaque" : "native_feature");
+    node.source_index = feature->container_enumeration_index ?
+      feature->container_enumeration_index :
+      (feature->native_enumeration_index ? feature->native_enumeration_index :
+       feature->traversal_index);
+    node.traversal_index = feature->traversal_index;
+    node.tree_path = feature->tree_path;
+    node.source_feature_id = feature->feature_id;
+    node.source_node_id = feature->feature_id;
+    node.has_children = has_children.find(feature->feature_id) != has_children.end();
+    node.has_geometry = FeatureHasTopology(context, feature->feature_id);
+    node.properties_available = true;
+    node.attributes = feature->attributes;
+    node.diagnostic_ids = feature->diagnostic_ids;
+    CollectFeatureSelection(context, feature->feature_id, node.topology_ids,
+                            node.mesh_face_ids);
+    context.native_tree_nodes.push_back(node);
+  }
+}
+
+static void AddNodeProperty(ParseContext& context, const std::string& node_id,
+                            const char* tab_id, const char* tab_label,
+                            const char* group_id, const char* group_label,
+                            const char* field_key, const char* field_label,
+                            const std::string& value, const char* unit,
+                            const char* value_type, const char* source,
+                            long display_order)
+{
+  if (value.empty()) return;
+  NodePropertyRecord property;
+  property.node_id = node_id;
+  property.tab_id = tab_id;
+  property.tab_label = tab_label;
+  property.group_id = group_id;
+  property.group_label = group_label;
+  property.field_key = field_key;
+  property.field_label = field_label;
+  property.value = value;
+  property.unit = unit ? unit : "";
+  property.value_type = value_type;
+  property.source = source;
+  property.display_order = display_order;
+  property.read_only = true;
+  context.node_properties.push_back(property);
+}
+
+static const ProductReferenceRecord* FindProductReference(const ParseContext& context,
+                                                          const std::string& reference_id)
+{
+  std::vector<ProductReferenceRecord>::const_iterator reference =
+    context.product_references.begin();
+  for (; reference != context.product_references.end(); ++reference)
+    if (reference->reference_id == reference_id) return &*reference;
+  return 0;
+}
+
+static void BuildNodeProperties(ParseContext& context)
+{
+  if (!context.node_properties.empty()) return;
+  std::vector<NativeTreeNodeRecord>::const_iterator node = context.native_tree_nodes.begin();
+  for (; node != context.native_tree_nodes.end(); ++node)
+  {
+    long order = 1;
+    AddNodeProperty(context, node->node_id, "properties", "\xE5\xB1\x9E\xE6\x80\xA7",
+                    "identity", "\xE5\xB8\xB8\xE8\xA7\x84", "display_name",
+                    "\xE6\x98\xBE\xE7\xA4\xBA\xE5\x90\x8D\xE7\xA7\xB0",
+                    node->display_text, "", "string", "native_tree", order++);
+    AddNodeProperty(context, node->node_id, "properties", "\xE5\xB1\x9E\xE6\x80\xA7",
+                    "identity", "\xE5\xB8\xB8\xE8\xA7\x84", "node_kind",
+                    "\xE8\x8A\x82\xE7\x82\xB9\xE7\xB1\xBB\xE5\x9E\x8B",
+                    node->node_kind, "", "string", "native_tree", order++);
+    AddNodeProperty(context, node->node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                    "catia_identity", "CATIA", "startup_type", "StartUp",
+                    node->startup_type, "", "string", "native_tree", order++);
+    AddNodeProperty(context, node->node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                    "catia_identity", "CATIA", "internal_name",
+                    "\xE5\x86\x85\xE9\x83\xA8\xE5\x90\x8D\xE7\xA7\xB0",
+                    node->internal_name, "", "string", "native_tree", order++);
+    AddNodeProperty(context, node->node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
+                    "catia_identity", "CATIA", "tree_path",
+                    "\xE6\xA0\x91\xE8\xB7\xAF\xE5\xBE\x84",
+                    node->tree_path, "", "string", "native_tree", order++);
+    if (!node->instance_id.empty())
+    {
+      AddNodeProperty(context, node->node_id, "product", "\xE4\xBA\xA7\xE5\x93\x81",
+                      "product_identity", "\xE4\xBA\xA7\xE5\x93\x81", "instance_id",
+                      "\xE5\xAE\x9E\xE4\xBE\x8B ID", node->instance_id, "", "string",
+                      "CATIProduct", order++);
+      AddNodeProperty(context, node->node_id, "product", "\xE4\xBA\xA7\xE5\x93\x81",
+                      "product_identity", "\xE4\xBA\xA7\xE5\x93\x81", "reference_id",
+                      "Reference ID", node->reference_id, "", "string", "CATIProduct", order++);
+      const ProductReferenceRecord* reference = FindProductReference(context, node->reference_id);
+      if (reference)
+      {
+        AddNodeProperty(context, node->node_id, "product", "\xE4\xBA\xA7\xE5\x93\x81",
+                        "product_identity", "\xE4\xBA\xA7\xE5\x93\x81", "part_number",
+                        "\xE9\x9B\xB6\xE4\xBB\xB6\xE7\xBC\x96\xE5\x8F\xB7",
+                        reference->part_number, "", "string", "CATIProduct", order++);
+        AddNodeProperty(context, node->node_id, "product", "\xE4\xBA\xA7\xE5\x93\x81",
+                        "product_identity", "\xE4\xBA\xA7\xE5\x93\x81", "default_representation",
+                        "\xE5\x8F\x82\xE8\x80\x83\xE6\x8F\x8F\xE8\xBF\xB0",
+                        reference->default_representation, "", "string", "CATIProduct", order++);
+      }
+    }
+    if (!node->source_feature_id.empty())
+      AddNodeProperty(context, node->node_id, "properties", "\xE5\xB1\x9E\xE6\x80\xA7",
+                      "identity", "\xE5\xB8\xB8\xE8\xA7\x84", "feature_id",
+                      "Feature ID", node->source_feature_id, "", "string", "native_tree", order++);
+    std::map<std::string, std::string>::const_iterator attr = node->attributes.begin();
+    for (; attr != node->attributes.end(); ++attr)
+      AddNodeProperty(context, node->node_id, "properties", "\xE5\xB1\x9E\xE6\x80\xA7",
+                      "attributes", "\xE5\xB1\x9E\xE6\x80\xA7", attr->first.c_str(),
+                      attr->first.c_str(), attr->second, "", "string", "native_tree", order++);
+  }
+}
+
 static CapabilityEvaluation EvaluateAnalyticSurfaceParameters(const ParseContext& context)
 {
   CapabilityEvaluation item;
@@ -1409,6 +1662,22 @@ static void BuildCapabilityEvaluations(const std::vector<FeatureRecord>& feature
   items.push_back(product_structure);
   items.push_back(instance_transform);
   items.push_back(MakeProductCompatibilityCapability(product_structure, instance_transform));
+  items.push_back(MakeCapability("native_tree_nodes_export",
+                                 context.native_tree_nodes.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.native_tree_nodes.size()),
+                                 static_cast<long>(context.native_tree_nodes.size()),
+                                 static_cast<long>(context.native_tree_nodes.size()),
+                                 context.native_tree_nodes.empty() ? "NO_NATIVE_TREE_NODES" :
+                                 "UNKNOWN_NODES_PRESERVED_WITH_PARTIAL_SEMANTICS"));
+  items.push_back(MakeCapability("node_properties_export",
+                                 context.node_properties.empty() ? "not_available" : "partial",
+                                 static_cast<long>(context.native_tree_nodes.size()),
+                                 static_cast<long>(context.node_properties.size()),
+                                 static_cast<long>(context.node_properties.size()),
+                                 context.node_properties.empty() ? "NO_NODE_PROPERTIES" :
+                                 "BASIC_PROPERTIES_ONLY_ADVANCED_R21_INTERFACES_PENDING"));
+  items.push_back(MakeCapability("catia_ui_virtual_nodes", "not_guaranteed", 0, 0, 0,
+                                 "CATINavigateObject_NOT_VALIDATED_IN_CURRENT_PUBLIC_HEADERS"));
   items.push_back(MakeCapability("decoder_registry_export", "complete", 1, 1, 1,
                                  "REGISTRY_EXPORTED"));
 }
@@ -1822,6 +2091,61 @@ void WriteProductInstance(std::ostream& output, const ProductInstanceRecord& rec
   output << '}';
 }
 
+void WriteNativeTreeNode(std::ostream& output, const NativeTreeNodeRecord& record)
+{
+  output << "{\"node_id\":\"" << JsonEscape(record.node_id)
+         << "\",\"id\":\"" << JsonEscape(record.node_id)
+         << "\",\"parent_id\":\"" << JsonEscape(record.parent_id)
+         << "\",\"display_text\":\"" << JsonEscape(record.display_text)
+         << "\",\"display_name\":\"" << JsonEscape(record.display_name)
+         << "\",\"label\":\"" << JsonEscape(record.display_text)
+         << "\",\"internal_name\":\"" << JsonEscape(record.internal_name)
+         << "\",\"startup_type\":\"" << JsonEscape(record.startup_type)
+         << "\",\"document_kind\":\"" << JsonEscape(record.document_kind)
+         << "\",\"node_kind\":\"" << JsonEscape(record.node_kind)
+         << "\",\"source_index\":" << record.source_index
+         << ",\"traversal_index\":" << record.traversal_index
+         << ",\"tree_path\":\"" << JsonEscape(record.tree_path)
+         << "\",\"instance_id\":\"" << JsonEscape(record.instance_id)
+         << "\",\"parent_instance_id\":\"" << JsonEscape(record.parent_instance_id)
+         << "\",\"reference_id\":\"" << JsonEscape(record.reference_id)
+         << "\",\"feature_id\":\"" << JsonEscape(record.source_feature_id)
+         << "\",\"source_feature_id\":\"" << JsonEscape(record.source_feature_id)
+         << "\",\"topology_id\":\"" << JsonEscape(record.topology_id)
+         << "\",\"source_node_id\":\"" << JsonEscape(record.source_node_id)
+         << "\",\"has_children\":" << (record.has_children ? "true" : "false")
+         << ",\"has_geometry\":" << (record.has_geometry ? "true" : "false")
+         << ",\"has_properties\":" << (record.properties_available ? "true" : "false")
+         << ",\"properties_available\":" << (record.properties_available ? "true" : "false")
+         << ",\"selection\":{\"mesh_face_ids\":";
+  WriteStringArray(output, record.mesh_face_ids);
+  output << ",\"topology_ids\":";
+  WriteStringArray(output, record.topology_ids);
+  output << "},\"attributes\":";
+  WriteStringMap(output, record.attributes);
+  output << ",\"diagnostic_ids\":";
+  WriteStringArray(output, record.diagnostic_ids);
+  output << '}';
+}
+
+void WriteNodeProperty(std::ostream& output, const NodePropertyRecord& record)
+{
+  output << "{\"node_id\":\"" << JsonEscape(record.node_id)
+         << "\",\"tab_id\":\"" << JsonEscape(record.tab_id)
+         << "\",\"tab_label\":\"" << JsonEscape(record.tab_label)
+         << "\",\"group_id\":\"" << JsonEscape(record.group_id)
+         << "\",\"group_label\":\"" << JsonEscape(record.group_label)
+         << "\",\"field_key\":\"" << JsonEscape(record.field_key)
+         << "\",\"field_label\":\"" << JsonEscape(record.field_label)
+         << "\",\"value\":\"" << JsonEscape(record.value)
+         << "\",\"unit\":\"" << JsonEscape(record.unit)
+         << "\",\"value_type\":\"" << JsonEscape(record.value_type)
+         << "\",\"source\":\"" << JsonEscape(record.source)
+         << "\",\"display_order\":" << record.display_order
+         << ",\"read_only\":" << (record.read_only ? "true" : "false")
+         << '}';
+}
+
 // 用途：写出一个原生设计特征 ResultOUT 拓扑摘要；它不等同于最终主实体 Face 映射。
 void WriteNativeFeatureResult(std::ostream& output, const NativeFeatureResultRecord& record)
 {
@@ -2072,6 +2396,8 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
 {
   if (!CoverageTracker::Validate(context.statistics)) { error = "coverage conservation failed"; return false; }
   if (!ValidateReferences(features, relations, parameters, business_features, error)) return false;
+  BuildNativeTreeNodes(features, context);
+  BuildNodeProperties(context);
   const DWORD output_start = GetTickCount();
   const std::string staging = output_dir + ".cadparse_stage";
   const DWORD existing_output = GetFileAttributesA(output_dir.c_str());
@@ -2177,6 +2503,20 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   { WriteProductInstance(output, *product_instance); output << '\n'; }
   if (!FinishOutput(output, "product_instances.jsonl", error)) return false;
 
+  if (!OpenOutput(output, JoinPath(staging, "native_tree_nodes.jsonl"), error)) return false;
+  std::vector<NativeTreeNodeRecord>::const_iterator native_tree_node =
+    context.native_tree_nodes.begin();
+  for (; native_tree_node != context.native_tree_nodes.end(); ++native_tree_node)
+  { WriteNativeTreeNode(output, *native_tree_node); output << '\n'; }
+  if (!FinishOutput(output, "native_tree_nodes.jsonl", error)) return false;
+
+  if (!OpenOutput(output, JoinPath(staging, "node_properties.jsonl"), error)) return false;
+  std::vector<NodePropertyRecord>::const_iterator node_property =
+    context.node_properties.begin();
+  for (; node_property != context.node_properties.end(); ++node_property)
+  { WriteNodeProperty(output, *node_property); output << '\n'; }
+  if (!FinishOutput(output, "node_properties.jsonl", error)) return false;
+
   if (!OpenOutput(output, JoinPath(staging, "native_feature_results.jsonl"), error)) return false;
   std::vector<NativeFeatureResultRecord>::const_iterator feature_result =
     context.native_feature_results.begin();
@@ -2231,6 +2571,8 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << ",\"fta_topology_link_count\":" << context.fta_topology_links.size()
          << ",\"product_reference_count\":" << context.product_references.size()
          << ",\"product_instance_count\":" << context.product_instances.size()
+         << ",\"native_tree_node_count\":" << context.native_tree_nodes.size()
+         << ",\"node_property_count\":" << context.node_properties.size()
          << ",\"native_feature_result_count\":" << context.native_feature_results.size()
          << ",\"native_feature_result_cell_count\":" << context.native_feature_result_cells.size()
          << ",\"native_feature_topology_link_count\":" << context.native_feature_topology_links.size()
@@ -2362,7 +2704,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   if (!FinishOutput(output, "coverage.json", error)) return false;
 
   context.metadata.execution_finished_utc = UtcNowIso8601();
-  const char* names[] = { "features.jsonl", "native_features.jsonl", "decoder_registry.json", "native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_topology_coedges.jsonl", "native_mesh_face_map.jsonl", "native_mesh_triangles.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl", "fta_topology_links.jsonl", "product_references.jsonl", "product_instances.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "capability_matrix.json", "diagnostics.json", "coverage.json", "parser.log" };
+  const char* names[] = { "features.jsonl", "native_features.jsonl", "native_tree_nodes.jsonl", "node_properties.jsonl", "decoder_registry.json", "native_feature_results.jsonl", "native_feature_result_cells.jsonl", "native_feature_topology_links.jsonl", "native_topology_bodies.jsonl", "native_topology_cells.jsonl", "native_topology_wires.jsonl", "native_topology_coedges.jsonl", "native_mesh_face_map.jsonl", "native_mesh_triangles.jsonl", "fta_sets.jsonl", "fta_semantics.jsonl", "fta_topology_links.jsonl", "product_references.jsonl", "product_instances.jsonl", "relations.jsonl", "parameters.jsonl", "business_features.jsonl", "capabilities.json", "capability_matrix.json", "diagnostics.json", "coverage.json", "parser.log" };
   std::map<std::string, std::string> artifact_hashes;
   std::map<std::string, unsigned long> artifact_sizes;
   int artifact = 0;
@@ -2388,6 +2730,7 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
          << "\"," << spacing << "\"build_timestamp_source\":\"" << JsonEscape(context.metadata.build_timestamp_source)
          << "\"," << spacing << "\"execution_started_utc\":\"" << JsonEscape(context.metadata.execution_started_utc)
          << "\"," << spacing << "\"execution_finished_utc\":\"" << JsonEscape(context.metadata.execution_finished_utc)
+         << "\"," << spacing << "\"document_kind\":\"" << JsonEscape(context.metadata.document_kind)
          << "\"," << spacing << "\"input\":{\"file_name\":\"" << JsonEscape(context.metadata.input_file_name)
          << "\",\"size_bytes\":" << context.metadata.input_size_bytes
          << ",\"sha256\":\"" << JsonEscape(context.metadata.input_sha256)
@@ -2406,6 +2749,11 @@ bool JsonArtifactWriter::Write(const std::vector<FeatureRecord>& features,
   WriteStringArray(output, context.metadata.discovery_entrypoints);
   output << ",\"coverage_scope\":\"" << JsonEscape(context.metadata.discovery_coverage_scope) << "\"},"
          << spacing << "\"model_contains_stale_objects\":" << (context.statistics.not_up_to_date_count ? "true" : "false")
+         << ',' << spacing << "\"has_geometry\":" << ((!context.topology_cells.empty() || !context.mesh_face_maps.empty()) ? "true" : "false")
+         << ',' << spacing << "\"native_tree_node_count\":" << context.native_tree_nodes.size()
+         << ',' << spacing << "\"node_property_count\":" << context.node_properties.size()
+         << ',' << spacing << "\"product_reference_count\":" << context.product_references.size()
+         << ',' << spacing << "\"product_instance_count\":" << context.product_instances.size()
          << ',' << spacing << "\"artifacts\":{";
   artifact = 0;
   for (; artifact < artifact_count; ++artifact)

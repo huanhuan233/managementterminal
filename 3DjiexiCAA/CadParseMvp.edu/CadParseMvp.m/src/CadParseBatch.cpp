@@ -56,6 +56,23 @@ static bool ParseArguments(int argc, char** argv, BatchOptions& options, std::st
   }
   return true;
 }
+
+static bool EndsWithNoCase(const std::string& value, const char* suffix)
+{
+  const std::string ending(suffix);
+  if (value.size() < ending.size()) return false;
+  const std::string tail = value.substr(value.size() - ending.size());
+  std::string::size_type i = 0;
+  for (; i < tail.size(); ++i)
+  {
+    char a = tail[i];
+    char b = ending[i];
+    if (a >= 'A' && a <= 'Z') a = static_cast<char>(a - 'A' + 'a');
+    if (b >= 'A' && b <= 'Z') b = static_cast<char>(b - 'A' + 'a');
+    if (a != b) return false;
+  }
+  return true;
+}
 }
 
 // 用途：执行一次 Batch 任务并把每类文档级失败映射为稳定非零退出码。
@@ -100,6 +117,8 @@ static int RunBatch(int argc, char** argv)
     "build did not provide CAD_PARSE_BUILD_TIMESTAMP_UTC" : "embedded by build_r21_x86.bat";
   context.metadata.execution_started_utc = UtcNowIso8601();
   context.metadata.input_file_name = SourcePathForOutput(options.input, false);
+  context.metadata.document_kind = EndsWithNoCase(options.input, ".CATProduct") ?
+    "catproduct" : "catpart";
   context.metadata.include_source_path = options.include_source_path;
   context.metadata.input_source_path = SourcePathForOutput(options.input, options.include_source_path);
   struct _stat input_status;
@@ -117,10 +136,20 @@ static int RunBatch(int argc, char** argv)
   context.metadata.runtime_value_source = "parser build target; no verified R21 Public SP/HF runtime API";
   ReadSourceFileHint(options.input, context.metadata);
   context.metadata.discovery_entrypoints.push_back("CATDocument");
-  context.metadata.discovery_entrypoints.push_back("CATIPrtContainer::GetPart");
-  context.metadata.discovery_entrypoints.push_back("CATIContainer::ListMembersHere(CATISpecObject)");
-  context.metadata.discovery_coverage_scope =
-    "objects reachable through verified R21 Public CATPart entrypoints; not guaranteed exhaustive";
+  if (context.metadata.document_kind == "catproduct")
+  {
+    context.metadata.discovery_entrypoints.push_back("CATIProduct::GetChildren(CATIProduct)");
+    context.metadata.discovery_entrypoints.push_back("CATIProduct::GetReferenceProduct");
+    context.metadata.discovery_coverage_scope =
+      "CATProduct BOM reachable through verified R21 Public ProductStructure entrypoints; referenced CATPart feature mounting requires validated reference document traversal";
+  }
+  else
+  {
+    context.metadata.discovery_entrypoints.push_back("CATIPrtContainer::GetPart");
+    context.metadata.discovery_entrypoints.push_back("CATIContainer::ListMembersHere(CATISpecObject)");
+    context.metadata.discovery_coverage_scope =
+      "objects reachable through verified R21 Public CATPart entrypoints; not guaranteed exhaustive";
+  }
 
   SessionGuard session;
   if (!session.Open(error))

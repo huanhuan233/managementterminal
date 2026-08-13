@@ -1,12 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { buildNativeFeatureTree, flattenFeatureTree, projectFeatureTree, splitHighlight } from './native-feature-tree';
-import type { FeatureTreeCategory, FeatureTreeKind, FeatureTreeNode, NativeFeatureRecord } from './native-feature-tree';
+import {
+  buildNativeFeatureTree,
+  buildUnifiedNativeTree,
+  flattenFeatureTree,
+  projectFeatureTree,
+  splitHighlight
+} from './native-feature-tree';
+import type {
+  FeatureTreeCategory,
+  FeatureTreeKind,
+  FeatureTreeNode,
+  NativeFeatureRecord,
+  NativeTreeRecord
+} from './native-feature-tree';
 
 defineOptions({ name: 'NativeFeatureTree' });
 
 const props = defineProps<{
   records: NativeFeatureRecord[];
+  nativeTreeRecords?: NativeTreeRecord[];
   sourceFileName: string;
   selectedId: string;
   faceRefsByFeatureId?: Record<string, string[]>;
@@ -14,6 +27,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [node: FeatureTreeNode];
+  openProperties: [node: FeatureTreeNode];
+  missingProperties: [node: FeatureTreeNode];
 }>();
 
 interface TreeNodeState {
@@ -33,7 +48,9 @@ const userExpandedKeys = ref<string[]>([]);
 const savedExpandedKeys = ref<string[]>([]);
 
 const sourceTree = computed(() =>
-  buildNativeFeatureTree(props.records, props.sourceFileName, props.faceRefsByFeatureId || {})
+  props.nativeTreeRecords?.length
+    ? buildUnifiedNativeTree(props.nativeTreeRecords)
+    : buildNativeFeatureTree(props.records, props.sourceFileName, props.faceRefsByFeatureId || {})
 );
 const projection = computed(() =>
   projectFeatureTree(sourceTree.value, {
@@ -45,6 +62,9 @@ const projection = computed(() =>
 const visibleNodes = computed(() => flattenFeatureTree(projection.value.nodes));
 
 const KIND_ICONS: Record<FeatureTreeKind, string> = {
+  catproduct: 'lucide:boxes',
+  product_assembly: 'lucide:package',
+  product_instance: 'lucide:box',
   catpart: 'lucide:file-box',
   part: 'lucide:box',
   datum_group: 'lucide:layers-3',
@@ -113,6 +133,15 @@ function handleSelect(node: FeatureTreeNode) {
   emit('select', node);
 }
 
+function handleOpenProperties(node: FeatureTreeNode) {
+  if (node.hasProperties) emit('openProperties', node);
+  else emit('missingProperties', node);
+}
+
+function handleNodeContextMenu(_event: Event, node: FeatureTreeNode) {
+  handleOpenProperties(node);
+}
+
 function iconFor(kind: FeatureTreeKind) {
   return KIND_ICONS[kind];
 }
@@ -136,9 +165,11 @@ watch(
 watch(query, (value, previous) => {
   if (value && !previous) savedExpandedKeys.value = [...userExpandedKeys.value];
   if (!value && previous) userExpandedKeys.value = [...savedExpandedKeys.value];
-  void syncTreeState();
+  syncTreeState();
 });
-watch([projection, () => props.selectedId], () => void syncTreeState(), { flush: 'post' });
+watch([projection, () => props.selectedId], () => {
+  syncTreeState();
+}, { flush: 'post' });
 </script>
 
 <template>
@@ -185,6 +216,7 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
         :indent="20"
         highlight-current
         @node-click="handleSelect"
+        @node-contextmenu="handleNodeContextMenu"
         @node-expand="handleExpand"
         @node-collapse="handleCollapse"
       >
@@ -194,7 +226,11 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
             placement="right"
             :show-after="500"
           >
-            <span class="feature-tree-row" :class="[`kind-${data.kind}`, { system: data.isSystem }]">
+            <span
+              class="feature-tree-row"
+              :class="[`kind-${data.kind}`, { system: data.isSystem }]"
+              @dblclick.stop="handleOpenProperties(data)"
+            >
               <span class="node-icon"><SvgIcon :icon="iconFor(data.kind)" /></span>
               <span class="node-title">
                 <template v-for="(part, index) in highlightParts(data.displayName)" :key="`${data.id}-${index}`">
@@ -203,6 +239,7 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
                 </template>
               </span>
               <span v-if="data.faceRefs.length" class="mapping-dot" title="已建立 Feature–Face 映射" />
+              <span v-if="data.hasProperties" class="property-dot" title="CATIA 属性可用" />
               <small v-if="kindLabel(data)" class="node-kind">{{ kindLabel(data) }}</small>
             </span>
           </ElTooltip>
@@ -361,6 +398,13 @@ watch([projection, () => props.selectedId], () => void syncTreeState(), { flush:
   flex: 0 0 6px;
   border-radius: 50%;
   background: var(--el-color-success);
+}
+.property-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--el-color-warning);
 }
 .system-node-switch {
   display: flex;

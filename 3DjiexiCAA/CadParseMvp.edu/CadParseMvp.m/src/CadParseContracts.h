@@ -753,6 +753,59 @@ struct ProductInstanceRecord
   std::vector<std::string> diagnostic_ids;
 };
 
+// 原生树节点是显示层事实记录；未知对象也必须保留，不依赖语义 Decoder 成功。
+struct NativeTreeNodeRecord
+{
+  NativeTreeNodeRecord()
+    : source_index(0), traversal_index(0), has_children(false),
+      has_geometry(false), properties_available(false) {}
+
+  std::string node_id;
+  std::string parent_id;
+  std::string display_text;
+  std::string display_name;
+  std::string internal_name;
+  std::string startup_type;
+  std::string document_kind;
+  std::string node_kind;
+  long source_index;
+  long traversal_index;
+  std::string tree_path;
+  std::string instance_id;
+  std::string parent_instance_id;
+  std::string reference_id;
+  std::string source_feature_id;
+  std::string topology_id;
+  std::vector<std::string> topology_ids;
+  std::vector<std::string> mesh_face_ids;
+  std::string source_node_id;
+  bool has_children;
+  bool has_geometry;
+  bool properties_available;
+  std::map<std::string, std::string> attributes;
+  std::vector<std::string> diagnostic_ids;
+};
+
+// CATIA 属性页的扁平字段输出；读取失败的高级属性不能阻断主树输出。
+struct NodePropertyRecord
+{
+  NodePropertyRecord() : display_order(0), read_only(true) {}
+
+  std::string node_id;
+  std::string tab_id;
+  std::string tab_label;
+  std::string group_id;
+  std::string group_label;
+  std::string field_key;
+  std::string field_label;
+  std::string value;
+  std::string unit;
+  std::string value_type;
+  std::string source;
+  long display_order;
+  bool read_only;
+};
+
 // 解码器执行终态；候选判断与执行结果分离，避免把 StartUp 预筛选误当成类型化成功。
 enum DecoderOutcome
 {
@@ -863,6 +916,7 @@ struct ParseMetadata
   std::string execution_started_utc;
   std::string execution_finished_utc;
   std::string input_file_name;
+  std::string document_kind;
   std::string input_source_path;
   unsigned long input_size_bytes;
   std::string input_sha256;
@@ -902,6 +956,8 @@ public:
   std::vector<FtaTopologyLinkRecord> fta_topology_links;
   std::vector<ProductReferenceRecord> product_references;
   std::vector<ProductInstanceRecord> product_instances;
+  std::vector<NativeTreeNodeRecord> native_tree_nodes;
+  std::vector<NodePropertyRecord> node_properties;
   std::vector<NativeFeatureResultRecord> native_feature_results;
   std::vector<NativeFeatureResultCellRecord> native_feature_result_cells;
   std::vector<NativeFeatureTopologyLinkRecord> native_feature_topology_links;

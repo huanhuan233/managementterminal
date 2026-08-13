@@ -1260,6 +1260,19 @@ int SelfTestSuite::RunAll()
   tests.Check(ReadWholeFile(output_a + "\\parser.log").find(
                 "decoder_match feature_id=F000001 decoder=document") != std::string::npos,
               "Parser log records deterministic decoder matches");
+  const std::string native_tree_json = ReadWholeFile(output_a + "\\native_tree_nodes.jsonl");
+  tests.Check(native_tree_json.find("\"node_id\":\"feature:F000001\"") != std::string::npos &&
+              native_tree_json.find("\"parent_id\":\"feature:F000001\"") != std::string::npos &&
+              native_tree_json.find("\"feature_id\":\"F000002\"") != std::string::npos,
+              "Native tree writer preserves parent_id and feature identity");
+  tests.Check(native_tree_json.find("\"source_index\":1") < native_tree_json.find("\"source_index\":2"),
+              "Native tree source_index preserves traversal order");
+  tests.Check(ReadWholeFile(output_a + "\\node_properties.jsonl").find(
+                "\"node_id\":\"feature:F000001\"") != std::string::npos,
+              "Node properties JSONL writer emits read-only basic properties");
+  tests.Check(ReadWholeFile(output_a + "\\manifest.json").find(
+                "\"native_tree_node_count\":2") != std::string::npos,
+              "Manifest reports native tree node count");
 
   // 验证中央 Writer 只调用通用载荷协议，新增合成载荷时不需要增加类型分支。
   FeatureRecord synthetic_json_feature = MakeFeature(
@@ -1303,6 +1316,41 @@ int SelfTestSuite::RunAll()
   tests.Check(ReadWholeFile("selftest_output_native_hole\\parser.log").find(
                 "schema=cad_parse_mvp_v11") != std::string::npos,
               "Product, FTA and completion artifact exports advance the parser schema to v11");
+
+  // 验证 CATProduct 中同一 Reference 的多个 Instance 不会在统一树输出时被合并。
+  ParseContext product_tree_context;
+  ProductReferenceRecord reference;
+  reference.reference_id = "R_SHARED";
+  reference.part_number = "SharedPart";
+  reference.read_status = "partial";
+  product_tree_context.product_references.push_back(reference);
+  ProductInstanceRecord root_instance;
+  root_instance.instance_id = "I_ROOT";
+  root_instance.reference_id = "ASM";
+  root_instance.instance_name = "Assembly";
+  root_instance.child_count = 2;
+  product_tree_context.product_instances.push_back(root_instance);
+  ProductInstanceRecord first_instance;
+  first_instance.instance_id = "I001";
+  first_instance.parent_instance_id = "I_ROOT";
+  first_instance.reference_id = "R_SHARED";
+  first_instance.instance_name = "Shared.1";
+  first_instance.child_index = 1;
+  product_tree_context.product_instances.push_back(first_instance);
+  ProductInstanceRecord second_instance = first_instance;
+  second_instance.instance_id = "I002";
+  second_instance.instance_name = "Shared.2";
+  second_instance.child_index = 2;
+  product_tree_context.product_instances.push_back(second_instance);
+  tests.Check(writer.Write(std::vector<FeatureRecord>(), std::vector<RelationRecord>(),
+                           product_tree_context, "selftest_output_product_tree", write_error),
+              "Product native tree JSON artifact writes successfully");
+  const std::string product_tree_json =
+    ReadWholeFile("selftest_output_product_tree\\native_tree_nodes.jsonl");
+  tests.Check(product_tree_json.find("\"node_id\":\"instance:I001\"") != std::string::npos &&
+              product_tree_json.find("\"node_id\":\"instance:I002\"") != std::string::npos &&
+              product_tree_json.find("\"reference_id\":\"R_SHARED\"") != std::string::npos,
+              "Repeated Product instances preserve unique node ids under the same Reference");
 
   // 验证派生记录存在悬空来源 ID 时 Writer 拒绝生成正式结果。
   std::vector<BusinessFeatureRecord> invalid_business;

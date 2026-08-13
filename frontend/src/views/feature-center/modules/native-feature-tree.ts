@@ -1,4 +1,7 @@
 export type FeatureTreeKind =
+  | 'catproduct'
+  | 'product_assembly'
+  | 'product_instance'
   | 'catpart'
   | 'part'
   | 'datum_group'
@@ -43,12 +46,43 @@ export interface NativeFeatureRecord {
   [key: string]: unknown;
 }
 
+export interface NativeTreeSelection {
+  mesh_face_ids?: string[];
+  topology_ids?: string[];
+}
+
+export interface NativeTreeRecord {
+  id: string;
+  parent_id?: string | null;
+  label?: string;
+  display_name?: string;
+  display_text?: string;
+  node_kind?: string;
+  document_kind?: string;
+  source_index?: number;
+  instance_id?: string | null;
+  reference_id?: string | null;
+  feature_id?: string | null;
+  topology_id?: string | null;
+  startup_type?: string | null;
+  internal_name?: string | null;
+  tree_path?: string;
+  has_geometry?: boolean;
+  has_properties?: boolean;
+  selection?: NativeTreeSelection;
+  source_node_id?: string | null;
+  children?: NativeTreeRecord[];
+  [key: string]: unknown;
+}
+
 export interface FeatureTreeNode {
   id: string;
   parentId?: string;
   name: string;
   displayName: string;
   kind: FeatureTreeKind;
+  nodeKind?: string;
+  documentKind?: string;
   nativeType?: string;
   sourceRef?: string;
   sequence: number;
@@ -56,8 +90,16 @@ export interface FeatureTreeNode {
   isSystem: boolean;
   isContainer: boolean;
   faceRefs: string[];
+  topologyRefs: string[];
+  hasGeometry: boolean;
+  hasProperties: boolean;
+  instanceId?: string;
+  referenceId?: string;
+  featureId?: string;
+  topologyId?: string;
+  sourceNodeId?: string;
   parameters?: Record<string, unknown>;
-  raw?: NativeFeatureRecord;
+  raw?: NativeFeatureRecord | NativeTreeRecord;
 }
 
 export interface FeatureTreeProjection {
@@ -107,7 +149,17 @@ const KIND_BY_TYPE: Record<string, FeatureTreeKind> = {
   boolean: 'parameter'
 };
 
-const CONTAINER_KINDS = new Set<FeatureTreeKind>(['catpart', 'part', 'datum_group', 'body', 'geometry_set', 'system']);
+const CONTAINER_KINDS = new Set<FeatureTreeKind>([
+  'catproduct',
+  'product_assembly',
+  'product_instance',
+  'catpart',
+  'part',
+  'datum_group',
+  'body',
+  'geometry_set',
+  'system'
+]);
 const SOLID_KINDS = new Set<FeatureTreeKind>(['body', 'pad', 'pocket', 'hole', 'fillet', 'chamfer', 'solid_feature']);
 
 // 用途：只截取文件名，防止 CAA 文档节点把本机绝对路径带入界面。
@@ -122,6 +174,23 @@ function featureKind(record: NativeFeatureRecord): FeatureTreeKind {
   const native = String(record.native_type || '').toLowerCase();
   if (SYSTEM_TYPES.has(startup) || SYSTEM_TYPES.has(native)) return 'system';
   return KIND_BY_TYPE[startup] || KIND_BY_TYPE[native] || 'unknown';
+}
+
+function nativeTreeKind(record: NativeTreeRecord): FeatureTreeKind {
+  const nodeKind = String(record.node_kind || '').toLowerCase();
+  const documentKind = String(record.document_kind || '').toLowerCase();
+  if (nodeKind === 'document' && documentKind === 'catproduct') return 'catproduct';
+  if (nodeKind === 'product_assembly') return 'product_assembly';
+  if (nodeKind === 'product_instance') return 'product_instance';
+  if (nodeKind === 'document' && documentKind === 'catpart') return 'catpart';
+  if (nodeKind === 'native_feature') {
+    return featureKind({
+      feature_id: String(record.feature_id || record.id),
+      startup_type: String(record.startup_type || ''),
+      native_type: String(record.startup_type || '')
+    });
+  }
+  return 'unknown';
 }
 
 function sequenceOf(record: NativeFeatureRecord) {
@@ -165,6 +234,11 @@ export function buildNativeFeatureTree(
       isSystem: kind === 'system',
       isContainer: CONTAINER_KINDS.has(kind),
       faceRefs: [...(faceRefsByFeatureId[record.feature_id] || [])],
+      topologyRefs: [],
+      hasGeometry: Boolean(faceRefsByFeatureId[record.feature_id]?.length),
+      hasProperties: false,
+      featureId: record.feature_id,
+      sourceNodeId: record.feature_id,
       parameters: record.attributes,
       raw: record
     });
@@ -180,29 +254,33 @@ export function buildNativeFeatureTree(
   sortNodes(roots);
 
   for (const part of nodes.values()) {
-    if (part.kind !== 'part') continue;
-    const datums = part.children.filter(child => child.kind === 'datum');
-    if (!datums.length) continue;
-    const datumIds = new Set(datums.map(node => node.id));
-    const group: FeatureTreeNode = {
-      id: `datum-group:${part.id}`,
-      parentId: part.id,
-      name: '基准元素',
-      displayName: '基准元素',
-      kind: 'datum_group',
-      sequence: Math.min(...datums.map(node => node.sequence)),
-      children: datums,
-      isSystem: false,
-      isContainer: true,
-      faceRefs: []
-    };
-    datums.forEach(node => {
-      node.parentId = group.id;
-    });
-    part.children = [...part.children.filter(child => !datumIds.has(child.id)), group];
-    sortNodes(part.children);
+    if (part.kind === 'part') {
+      const datums = part.children.filter(child => child.kind === 'datum');
+      if (datums.length) {
+        const datumIds = new Set(datums.map(node => node.id));
+        const group: FeatureTreeNode = {
+          id: `datum-group:${part.id}`,
+          parentId: part.id,
+          name: '鍩哄噯鍏冪礌',
+          displayName: '鍩哄噯鍏冪礌',
+          kind: 'datum_group',
+          sequence: Math.min(...datums.map(node => node.sequence)),
+          children: datums,
+          isSystem: false,
+          isContainer: true,
+          faceRefs: [],
+          topologyRefs: [],
+          hasGeometry: false,
+          hasProperties: false
+        };
+        datums.forEach(node => {
+          node.parentId = group.id;
+        });
+        part.children = [...part.children.filter(child => !datumIds.has(child.id)), group];
+        sortNodes(part.children);
+      }
+    }
   }
-
   if (!roots.some(node => node.kind === 'catpart')) {
     return [
       {
@@ -214,7 +292,10 @@ export function buildNativeFeatureTree(
         children: roots,
         isSystem: false,
         isContainer: true,
-        faceRefs: []
+        faceRefs: [],
+        topologyRefs: [],
+        hasGeometry: false,
+        hasProperties: false
       }
     ];
   }
@@ -278,6 +359,60 @@ export function flattenFeatureTree(nodes: FeatureTreeNode[]): FeatureTreeNode[] 
   };
   nodes.forEach(visit);
   return flattened;
+}
+
+function nativeTreeName(record: NativeTreeRecord) {
+  return String(record.display_text || record.display_name || record.label || record.internal_name || record.id);
+}
+
+function nativeTreeSelection(record: NativeTreeRecord) {
+  const selection = record.selection || {};
+  return {
+    faceRefs: [...new Set((selection.mesh_face_ids || []).map(String))].sort(),
+    topologyRefs: [...new Set((selection.topology_ids || []).map(String))].sort()
+  };
+}
+
+function optionalRecordString(value: unknown) {
+  return value ? String(value) : undefined;
+}
+
+export function buildUnifiedNativeTree(records: NativeTreeRecord[]): FeatureTreeNode[] {
+  function convert(record: NativeTreeRecord, parentId?: string): FeatureTreeNode {
+    const kind = nativeTreeKind(record);
+    const { faceRefs, topologyRefs } = nativeTreeSelection(record);
+    const rawName = nativeTreeName(record);
+    const node: FeatureTreeNode = {
+      id: String(record.id),
+      parentId: record.parent_id ? String(record.parent_id) : parentId,
+      name: rawName,
+      displayName: baseName(rawName),
+      kind,
+      nodeKind: String(record.node_kind || ''),
+      documentKind: String(record.document_kind || ''),
+      nativeType: optionalRecordString(record.startup_type),
+      sourceRef: optionalRecordString(record.tree_path || record.source_node_id),
+      sequence: Number(record.source_index ?? Number.MAX_SAFE_INTEGER),
+      children: (record.children || []).map(child => convert(child, String(record.id))),
+      isSystem: kind === 'system',
+      isContainer: CONTAINER_KINDS.has(kind) || Boolean(record.children?.length),
+      faceRefs,
+      topologyRefs,
+      hasGeometry: Boolean(record.has_geometry || faceRefs.length || topologyRefs.length),
+      hasProperties: Boolean(record.has_properties),
+      instanceId: optionalRecordString(record.instance_id),
+      referenceId: optionalRecordString(record.reference_id),
+      featureId: optionalRecordString(record.feature_id),
+      topologyId: optionalRecordString(record.topology_id),
+      sourceNodeId: optionalRecordString(record.source_node_id),
+      raw: record
+    };
+    sortNodes(node.children);
+    return node;
+  }
+  const roots = records.map(record => convert(record));
+  sortNodes(roots);
+  return roots;
 }
 
 // 用途：返回纯文本片段供模板使用 mark 渲染，避免 v-html 和转义风险。
