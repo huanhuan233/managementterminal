@@ -6,12 +6,16 @@
 #include "CATDocument.h"
 #include "CATDocumentServices.h"
 #include "CATIContainer.h"
+#include "CATIContainerOfDocument.h"
 #include "CATIDocRoots.h"
 #include "CATInit.h"
 #include "CATIPrtContainer.h"
 #include "CATIPrtPart.h"
 #include "CATIProduct.h"
+#include "CATIProductInSession.h"
+#include "CATILinkableObject.h"
 #include "CATIMovable.h"
+#include "CATINavigateObject.h"
 #include "CATISpecObject.h"
 #include "CATIShapeFeatureBody.h"
 #include "CATITPSComponent.h"
@@ -34,6 +38,7 @@
 #include "CATICkeType.h"
 #include "CATSession.h"
 #include "CATSessionServices.h"
+#include "CATListOfCATUnicodeString.h"
 #include "CATUnicodeString.h"
 #include "CATIAHole.h"
 #include "CATIAPad.h"
@@ -3194,6 +3199,25 @@ static std::string MakeProductReferenceId(const std::string& part_number)
   return id.str();
 }
 
+static std::string StripCatiaOccurrenceSuffix(const std::string& name)
+{
+  const std::string::size_type dot = name.rfind('.');
+  if (dot == std::string::npos || dot + 1 >= name.size()) return name;
+  std::string::size_type index = dot + 1;
+  for (; index < name.size(); ++index)
+    if (name[index] < '0' || name[index] > '9') return name;
+  return name.substr(0, dot);
+}
+
+static std::string ProductReferenceKey(const std::string& part_number,
+                                       const std::string& instance_name)
+{
+  if (!part_number.empty()) return part_number;
+  const std::string stripped_instance = StripCatiaOccurrenceSuffix(instance_name);
+  if (!stripped_instance.empty()) return stripped_instance;
+  return instance_name;
+}
+
 static bool HasProductReference(const ParseContext& context, const std::string& reference_id)
 {
   std::vector<ProductReferenceRecord>::const_iterator record =
@@ -3205,7 +3229,8 @@ static bool HasProductReference(const ParseContext& context, const std::string& 
 
 static void AddProductReference(CATIProduct* product, ParseContext& context,
                                 const std::string& reference_id,
-                                const std::string& source_document)
+                                const std::string& source_document,
+                                const std::string& fallback_display_name)
 {
   if (!product || HasProductReference(context, reference_id)) return;
   ProductReferenceRecord record;
@@ -3216,7 +3241,8 @@ static void AddProductReference(CATIProduct* product, ParseContext& context,
   try
   {
     record.part_number = UnicodeToUtf8(product->GetPartNumber());
-    record.display_name = record.part_number;
+    record.display_name = record.part_number.empty() ? fallback_display_name :
+      record.part_number;
     record.child_count = product->GetChildrenCount();
     CATUnicodeString rep_name;
     if (SUCCEEDED(product->GetDefaultRepName(rep_name, CATPrd3D, TRUE)))
@@ -3309,8 +3335,9 @@ static void CrawlProductInstance(CATIProduct* product, ParseContext& context,
   std::string part_number;
   try { part_number = UnicodeToUtf8(reference_ptr->GetPartNumber()); }
   catch (...) { part_number = ""; }
-  const std::string reference_id = MakeProductReferenceId(part_number);
-  AddProductReference(reference_ptr, context, reference_id, source_document);
+  const std::string reference_key = ProductReferenceKey(part_number, instance_name);
+  const std::string reference_id = MakeProductReferenceId(reference_key);
+  AddProductReference(reference_ptr, context, reference_id, source_document, reference_key);
 
   ProductInstanceRecord instance;
   std::ostringstream id;
@@ -3324,7 +3351,7 @@ static void CrawlProductInstance(CATIProduct* product, ParseContext& context,
   instance.instance_id = id.str();
   instance.parent_instance_id = parent_instance_id;
   instance.reference_id = reference_id;
-  instance.instance_name = instance_name.empty() ? part_number : instance_name;
+  instance.instance_name = instance_name.empty() ? reference_key : instance_name;
   instance.depth = depth;
   instance.child_index = child_index;
   instance.read_status = "partial";
@@ -5094,6 +5121,8 @@ static bool AppendProductSpecTreeNode(CATISpecObject* spec, ParseContext& contex
   }
 }
 
+static bool SpecObjectExposesPart(CATISpecObject* spec);
+
 static bool QueryProductSpecObject(CATIProduct* product, CATISpecObject** spec)
 {
   if (!product || !spec) return false;
@@ -5108,6 +5137,392 @@ static bool QueryProductSpecObject(CATIProduct* product, CATISpecObject** spec)
   return false;
 }
 
+static bool QueryPartSpecFromDocument(CATDocument* document, CATISpecObject** spec)
+{
+  if (!document || !spec) return false;
+  *spec = 0;
+  CATIContainerOfDocument* container_of_document = 0;
+  try
+  {
+    if (FAILED(document->QueryInterface(IID_CATIContainerOfDocument,
+        reinterpret_cast<void**>(&container_of_document))) || !container_of_document)
+      return false;
+  }
+  catch (...) { return false; }
+  CaaInterfaceGuard<CATIContainerOfDocument> document_container_guard(container_of_document);
+
+  CATIContainer* spec_container = 0;
+  try
+  {
+    if (FAILED(container_of_document->GetSpecContainer(spec_container)) || !spec_container)
+      return false;
+  }
+  catch (...) { return false; }
+  CaaInterfaceGuard<CATIContainer> spec_container_guard(spec_container);
+
+  CATIPrtContainer* part_container = 0;
+  try
+  {
+    if (FAILED(spec_container->QueryInterface(IID_CATIPrtContainer,
+        reinterpret_cast<void**>(&part_container))) || !part_container)
+      return false;
+  }
+  catch (...) { return false; }
+  CaaInterfaceGuard<CATIPrtContainer> container_guard(part_container);
+
+  CATISpecObject_var part = NULL_var;
+  try { part = part_container->GetPart(); }
+  catch (...) { part = NULL_var; }
+  if (part == NULL_var) return false;
+  CATISpecObject* part_pointer = part;
+  if (!part_pointer) return false;
+  part_pointer->AddRef();
+  *spec = part_pointer;
+  return true;
+}
+
+static bool QueryProductDocumentPartSpec(CATIProduct* product, CATISpecObject** spec,
+                                         std::string& source_api)
+{
+  if (!product || !spec) return false;
+  *spec = 0;
+  CATIProduct_var reference = NULL_var;
+  try { reference = product->GetReferenceProduct(); }
+  catch (...) { reference = NULL_var; }
+  CATIProduct* product_to_read = reference;
+  if (!product_to_read) product_to_read = product;
+
+  CATILinkableObject* linkable = 0;
+  try
+  {
+    if (FAILED(product_to_read->QueryInterface(IID_CATILinkableObject,
+        reinterpret_cast<void**>(&linkable))) || !linkable)
+      return false;
+  }
+  catch (...) { return false; }
+  CaaInterfaceGuard<CATILinkableObject> linkable_guard(linkable);
+
+  CATDocument* document = 0;
+  try { document = linkable->GetDocument(); }
+  catch (...) { document = 0; }
+  if (QueryPartSpecFromDocument(document, spec))
+  {
+    source_api = "CATIProduct::GetReferenceProduct+CATILinkableObject::GetDocument+CATIContainerOfDocument";
+    return true;
+  }
+  return false;
+}
+
+static bool QueryUnknownPartSpec(CATBaseUnknown* object, CATISpecObject** spec,
+                                 std::string& source_api)
+{
+  if (!object || !spec) return false;
+  *spec = 0;
+
+  CATISpecObject* object_spec = 0;
+  try
+  {
+    if (SUCCEEDED(object->QueryInterface(IID_CATISpecObject,
+        reinterpret_cast<void**>(&object_spec))) && object_spec)
+    {
+      if (SpecObjectExposesPart(object_spec))
+      {
+        *spec = object_spec;
+        source_api = "CATBaseUnknown+CATISpecObject";
+        return true;
+      }
+      object_spec->Release();
+    }
+  }
+  catch (...) { if (object_spec) object_spec->Release(); }
+
+  CATILinkableObject* linkable = 0;
+  try
+  {
+    if (SUCCEEDED(object->QueryInterface(IID_CATILinkableObject,
+        reinterpret_cast<void**>(&linkable))) && linkable)
+    {
+      CaaInterfaceGuard<CATILinkableObject> linkable_guard(linkable);
+      CATDocument* document = 0;
+      try { document = linkable->GetDocument(); }
+      catch (...) { document = 0; }
+      if (QueryPartSpecFromDocument(document, spec))
+      {
+        source_api = "CATBaseUnknown+CATILinkableObject::GetDocument";
+        return true;
+      }
+    }
+  }
+  catch (...) {}
+
+  return false;
+}
+
+static bool QueryProductActiveShapePartSpec(CATIProduct* product, CATISpecObject** spec,
+                                            std::string& source_api)
+{
+  if (!product || !spec) return false;
+  *spec = 0;
+  CATIProductInSession* session_product = 0;
+  try
+  {
+    if (FAILED(product->QueryInterface(IID_CATIProductInSession,
+        reinterpret_cast<void**>(&session_product))) || !session_product)
+      return false;
+  }
+  catch (...) { return false; }
+  CaaInterfaceGuard<CATIProductInSession> session_product_guard(session_product);
+
+  CATILinkableObject_var shape = NULL_var;
+  try
+  {
+    if (FAILED(session_product->GetActiveShapeRep(shape, CATPrd3D, TRUE)) ||
+        shape == NULL_var)
+      shape = session_product->GetActiveShapeRep();
+  }
+  catch (...) { shape = NULL_var; }
+  CATILinkableObject* shape_pointer = shape;
+  if (!shape_pointer) return false;
+  if (QueryUnknownPartSpec(shape_pointer, spec, source_api))
+  {
+    source_api = "CATIProductInSession::GetActiveShapeRep+" + source_api;
+    return true;
+  }
+  return false;
+}
+
+static bool QueryProductIndexedShapePartSpec(CATIProduct* product, CATISpecObject** spec,
+                                             std::string& source_api)
+{
+  if (!product || !spec) return false;
+  *spec = 0;
+  CATILinkableObject_var shape = NULL_var;
+  try { shape = product->GetShapeRep(0); }
+  catch (...) { shape = NULL_var; }
+  CATILinkableObject* shape_pointer = shape;
+  if (!shape_pointer) return false;
+  if (QueryUnknownPartSpec(shape_pointer, spec, source_api))
+  {
+    source_api = "CATIProduct::GetShapeRep(index=0)+" + source_api;
+    return true;
+  }
+  return false;
+}
+
+static bool QueryProductShapePartSpec(CATIProduct* product, CATISpecObject** spec,
+                                      std::string& source_api)
+{
+  if (!product || !spec) return false;
+  *spec = 0;
+  CATUnicodeString shape_name("Default");
+  try
+  {
+    CATUnicodeString default_name;
+    if (SUCCEEDED(product->GetDefaultRepName(default_name, CATPrd3D, TRUE)) &&
+        default_name.GetLengthInChar() > 0)
+      shape_name = default_name;
+  }
+  catch (...) {}
+
+  CATILinkableObject_var shape = NULL_var;
+  try
+  {
+    if (FAILED(product->GetShapeRep(shape, shape_name, CATPrd3D, TRUE, TRUE)) ||
+        shape == NULL_var)
+      return false;
+  }
+  catch (...) { return false; }
+
+  CATILinkableObject* linkable = shape;
+  if (linkable && QueryUnknownPartSpec(linkable, spec, source_api))
+  {
+    source_api = "CATIProduct::GetShapeRep(CATPrd3D,load)+" + source_api;
+    return true;
+  }
+  return false;
+}
+
+static std::string ReadNavigateLabel(CATINavigateObject* navigate)
+{
+  if (!navigate) return "";
+  CATListValCATUnicodeString* labels = 0;
+  try { labels = navigate->GetIdentificators(); }
+  catch (...) { labels = 0; }
+  if (!labels) return "";
+  std::string label;
+  try
+  {
+    if (labels->Size() > 0) label = UnicodeToUtf8((*labels)[1]);
+  }
+  catch (...) {}
+  delete labels;
+  return label;
+}
+
+static std::string ProductNavigateNodeId(long index)
+{
+  std::ostringstream id;
+  id << "NAV_";
+  if (index < 10) id << "00000";
+  else if (index < 100) id << "0000";
+  else if (index < 1000) id << "000";
+  else if (index < 10000) id << "00";
+  else if (index < 100000) id << "0";
+  id << index;
+  return id.str();
+}
+
+static bool AppendProductNavigateNode(CATBaseUnknown* object, ParseContext& context,
+                                      const ProductInstanceRecord& instance,
+                                      const std::string& parent_node_id,
+                                      const std::string& parent_path,
+                                      long source_index, long& local_index,
+                                      std::set<CATBaseUnknown*>& path_guard)
+{
+  if (!object) return false;
+  if (path_guard.find(object) != path_guard.end())
+  {
+    context.AddDiagnostic("warning", "product_native_tree",
+                          "CATIA_NAVIGATE_TREE_CYCLE",
+                          "CATINavigateObject cycle detected while dumping product UI tree",
+                          std::string("instance:") + instance.instance_id);
+    return true;
+  }
+
+  CATINavigateObject* navigate = 0;
+  try
+  {
+    if (FAILED(object->QueryInterface(IID_CATINavigateObject,
+        reinterpret_cast<void**>(&navigate))) || !navigate)
+      return false;
+  }
+  catch (...) { return false; }
+  CaaInterfaceGuard<CATINavigateObject> navigate_guard(navigate);
+  path_guard.insert(object);
+
+  std::string label = ReadNavigateLabel(navigate);
+  if (label.empty()) label = "unnamed";
+  const std::string local_id = ProductNavigateNodeId(local_index++);
+  const std::string tree_path = parent_path.empty() ? label : parent_path + "/" + label;
+
+  NativeTreeNodeRecord node;
+  node.node_id = std::string("instance:") + instance.instance_id + "/nav:" + local_id;
+  node.parent_id = parent_node_id;
+  node.display_text = label;
+  node.display_name = label;
+  node.internal_name = label;
+  node.startup_type = "CATINavigateObject";
+  node.document_kind = "catproduct";
+  node.node_kind = "catia_ui_node";
+  node.source_index = source_index;
+  node.traversal_index = static_cast<long>(context.native_tree_nodes.size() + 1);
+  node.tree_path = tree_path;
+  node.instance_id = instance.instance_id;
+  node.parent_instance_id = instance.parent_instance_id;
+  node.reference_id = instance.reference_id;
+  node.source_node_id = local_id;
+  node.properties_available = true;
+  node.attributes["value_source"] = "CATINavigateObject";
+
+  CATListValCATBaseUnknown_var* children = 0;
+  try { children = navigate->GetChildren(); }
+  catch (...) { children = 0; }
+  node.has_children = children && children->Size() > 0;
+  context.native_tree_nodes.push_back(node);
+
+  if (children)
+  {
+    int index = 0;
+    for (index = 1; index <= children->Size(); ++index)
+    {
+      CATBaseUnknown_var child = (*children)[index];
+      CATBaseUnknown* child_base = child;
+      if (child_base)
+        AppendProductNavigateNode(child_base, context, instance, node.node_id,
+                                  tree_path, index, local_index, path_guard);
+    }
+    delete children;
+  }
+  path_guard.erase(object);
+  return true;
+}
+
+static bool MountProductNavigateTree(CATIProduct* instance_product,
+                                     CATIProduct* reference_product,
+                                     ParseContext& context,
+                                     const ProductInstanceRecord& instance)
+{
+  if (instance.child_count > 0) return false;
+  CATBaseUnknown* root = reference_product ? static_cast<CATBaseUnknown*>(reference_product) :
+    static_cast<CATBaseUnknown*>(instance_product);
+  if (!root) return false;
+
+  const std::string reference_node_id = std::string("instance:") + instance.instance_id +
+    "/reference:" + instance.reference_id;
+  NativeTreeNodeRecord reference_node;
+  reference_node.node_id = reference_node_id;
+  reference_node.parent_id = std::string("instance:") + instance.instance_id;
+  reference_node.display_text = instance.instance_name.empty() ? instance.reference_id :
+    instance.instance_name;
+  reference_node.display_name = reference_node.display_text;
+  reference_node.internal_name = instance.reference_id;
+  reference_node.startup_type = "CATIProductReference";
+  reference_node.document_kind = "catproduct";
+  reference_node.node_kind = "product_reference";
+  reference_node.source_index = 0;
+  reference_node.traversal_index = static_cast<long>(context.native_tree_nodes.size() + 1);
+  reference_node.tree_path = instance.tree_path + "/" + reference_node.display_text;
+  reference_node.instance_id = instance.instance_id;
+  reference_node.parent_instance_id = instance.parent_instance_id;
+  reference_node.reference_id = instance.reference_id;
+  reference_node.source_node_id = instance.reference_id;
+  reference_node.has_children = true;
+  reference_node.properties_available = true;
+  reference_node.attributes["value_source"] = "CATINavigateObject";
+  const std::vector<NativeTreeNodeRecord>::size_type size_before =
+    context.native_tree_nodes.size();
+  context.native_tree_nodes.push_back(reference_node);
+
+  long local_index = 1;
+  std::set<CATBaseUnknown*> path_guard;
+  const bool mounted = AppendProductNavigateNode(root, context, instance, reference_node_id,
+                                                 reference_node.tree_path, 1,
+                                                 local_index, path_guard);
+  if (!mounted)
+  {
+    context.native_tree_nodes.pop_back();
+    return false;
+  }
+  if (context.native_tree_nodes.size() == size_before + 2 &&
+      !context.native_tree_nodes.back().has_children)
+  {
+    context.native_tree_nodes.resize(size_before);
+    context.AddDiagnostic("info", "product_native_tree",
+                          "CATIA_NAVIGATE_TREE_LEAF_ONLY",
+                          "CATINavigateObject returned only the product node; BOM node preserved",
+                          std::string("instance:") + instance.instance_id);
+    return false;
+  }
+  return mounted;
+}
+
+static bool SpecObjectExposesPart(CATISpecObject* spec)
+{
+  if (!spec) return false;
+  CATIPrtPart* part = 0;
+  try
+  {
+    if (SUCCEEDED(spec->QueryInterface(IID_CATIPrtPart,
+        reinterpret_cast<void**>(&part))) && part)
+    {
+      CaaInterfaceGuard<CATIPrtPart> part_guard(part);
+      return true;
+    }
+  }
+  catch (...) {}
+  return false;
+}
+
 static bool MountProductReferenceSpecTree(CATIProduct* instance_product,
                                           CATIProduct* reference_product,
                                           ParseContext& context,
@@ -5116,12 +5531,18 @@ static bool MountProductReferenceSpecTree(CATIProduct* instance_product,
   if (instance.instance_id.empty()) return false;
   CATISpecObject* spec = 0;
   std::string source_api;
-  if (QueryProductSpecObject(reference_product, &spec))
-    source_api = "reference_product.QueryInterface(CATISpecObject)";
-  else if (QueryProductSpecObject(instance_product, &spec))
-    source_api = "instance_product.QueryInterface(CATISpecObject)";
+  if (!QueryProductDocumentPartSpec(reference_product, &spec, source_api))
+    QueryProductDocumentPartSpec(instance_product, &spec, source_api);
+  if (!spec && !QueryProductActiveShapePartSpec(reference_product, &spec, source_api))
+    QueryProductActiveShapePartSpec(instance_product, &spec, source_api);
+  if (!spec && !QueryProductIndexedShapePartSpec(reference_product, &spec, source_api))
+    QueryProductIndexedShapePartSpec(instance_product, &spec, source_api);
+  if (!spec && !QueryProductShapePartSpec(reference_product, &spec, source_api))
+    QueryProductShapePartSpec(instance_product, &spec, source_api);
   if (!spec)
   {
+    if (MountProductNavigateTree(instance_product, reference_product, context, instance))
+      return true;
     context.AddDiagnostic("info", "product_native_tree",
                           "PRODUCT_REFERENCE_SPEC_TREE_UNAVAILABLE",
                           "CATIProduct instance/reference did not expose CATISpecObject; BOM node preserved",

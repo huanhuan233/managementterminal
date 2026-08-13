@@ -2,6 +2,7 @@ export type FeatureTreeKind =
   | 'catproduct'
   | 'product_assembly'
   | 'product_instance'
+  | 'product_reference'
   | 'catpart'
   | 'part'
   | 'datum_group'
@@ -182,6 +183,7 @@ function nativeTreeKind(record: NativeTreeRecord): FeatureTreeKind {
   if (nodeKind === 'document' && documentKind === 'catproduct') return 'catproduct';
   if (nodeKind === 'product_assembly') return 'product_assembly';
   if (nodeKind === 'product_instance') return 'product_instance';
+  if (nodeKind === 'product_reference') return 'product_reference';
   if (nodeKind === 'document' && documentKind === 'catpart') return 'catpart';
   if (nodeKind === 'native_feature') {
     return featureKind({

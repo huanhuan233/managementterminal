@@ -65,6 +65,7 @@ const KIND_ICONS: Record<FeatureTreeKind, string> = {
   catproduct: 'lucide:boxes',
   product_assembly: 'lucide:package',
   product_instance: 'lucide:box',
+  product_reference: 'lucide:box-open',
   catpart: 'lucide:file-box',
   part: 'lucide:box',
   datum_group: 'lucide:layers-3',
@@ -167,9 +168,13 @@ watch(query, (value, previous) => {
   if (!value && previous) userExpandedKeys.value = [...savedExpandedKeys.value];
   syncTreeState();
 });
-watch([projection, () => props.selectedId], () => {
-  syncTreeState();
-}, { flush: 'post' });
+watch(
+  [projection, () => props.selectedId],
+  () => {
+    syncTreeState();
+  },
+  { flush: 'post' }
+);
 </script>
 
 <template>
@@ -306,31 +311,39 @@ watch([projection, () => props.selectedId], () => {
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 1px 7px 8px;
+  padding: 1px 9px 8px 7px;
 }
 .native-feature-tree {
   --el-tree-node-hover-bg-color: var(--el-fill-color-light);
+  width: max-content;
+  min-width: 100%;
   background: transparent;
 }
 .native-feature-tree :deep(.el-tree-node) {
   position: relative;
 }
 .native-feature-tree :deep(.el-tree-node__children) {
-  border-left: 1px solid var(--el-border-color-lighter);
-  margin-left: 9px;
+  border-left: 1px solid #d7dce7;
+  margin-left: 12px;
 }
 .native-feature-tree :deep(.el-tree-node__content) {
-  height: 34px;
-  border-radius: 7px;
-  margin: 1px 0;
-  padding-right: 5px;
+  position: relative;
+  height: 28px;
+  border-radius: 3px;
+  margin: 0;
+  padding-right: 8px;
 }
 .native-feature-tree :deep(.el-tree-node__content::before) {
   position: absolute;
-  left: -10px;
-  width: 10px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  top: 14px;
+  left: -12px;
+  width: 12px;
+  border-top: 1px solid #d7dce7;
   content: '';
+}
+.native-feature-tree :deep(.el-tree-node:first-child > .el-tree-node__content::before) {
+  left: -8px;
+  width: 8px;
 }
 .native-feature-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
   color: var(--el-color-primary);
@@ -342,20 +355,27 @@ watch([projection, () => props.selectedId], () => {
 }
 .feature-tree-row {
   display: flex;
-  width: 100%;
-  min-width: 0;
+  width: max-content;
+  min-width: 100%;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding-right: 8px;
 }
 .feature-tree-row.system {
   color: var(--el-text-color-secondary);
 }
 .node-icon {
   display: grid;
-  flex: 0 0 20px;
+  flex: 0 0 18px;
   color: var(--el-text-color-regular);
-  font-size: 19px;
+  font-size: 17px;
   place-items: center;
+}
+.kind-catproduct .node-icon,
+.kind-product_assembly .node-icon,
+.kind-product_instance .node-icon,
+.kind-product_reference .node-icon {
+  color: #5f6673;
 }
 .kind-datum .node-icon {
   color: var(--el-text-color-secondary);
@@ -372,10 +392,10 @@ watch([projection, () => props.selectedId], () => {
   color: var(--el-color-warning);
 }
 .node-title {
+  flex: 0 0 auto;
   min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 360px;
+  overflow: visible;
   white-space: nowrap;
 }
 .node-title mark {
@@ -386,7 +406,7 @@ watch([projection, () => props.selectedId], () => {
 }
 .node-kind {
   max-width: 72px;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   color: var(--el-text-color-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
