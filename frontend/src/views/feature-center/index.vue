@@ -92,6 +92,18 @@ interface NodePropertyRecord {
   read_only?: boolean;
 }
 
+interface PropertyGroup {
+  group_id: string;
+  group_label: string;
+  fields: NodePropertyRecord[];
+}
+
+interface PropertyTab {
+  tab_id: string;
+  tab_label: string;
+  groups: PropertyGroup[];
+}
+
 type GeometryCategory = 'body_solid' | 'face' | 'loop' | 'coedge' | 'edge' | 'vertex';
 
 interface GeometryTreeNode {
@@ -254,8 +266,54 @@ const selectedNativeParameterFamily = computed(() => {
 });
 const selectedNativeFaces = computed(() => nativeFaceRefs.value[selectedNativeFeatureId.value] || []);
 const selectedNodeProperties = computed(() => propertiesForNode(propertiesDialogNode.value || selectedNativeTreeNode.value));
+const massPropertyGroups = new Set(['mass_general', 'center_of_gravity', 'inertia_matrix', 'principal_moments', 'principal_axes']);
+const propertyTabOrder = ['mechanical', 'mass', 'graphic', 'graphics', 'product', 'properties', 'color_management'];
+const propertyGroupOrder = ['catia_identity', 'mass_general', 'center_of_gravity', 'inertia_matrix', 'principal_moments', 'principal_axes', 'product_identity'];
+
+function normalizeNodeProperty(property: NodePropertyRecord): NodePropertyRecord {
+  if (property.tab_id === 'mechanical' && massPropertyGroups.has(property.group_id)) {
+    return { ...property, tab_id: 'mass', tab_label: '质量' };
+  }
+  if (property.tab_id === 'graphics') {
+    return { ...property, tab_id: 'graphic', tab_label: '图形' };
+  }
+  if (property.tab_id === 'color' || property.tab_id === 'color_management') {
+    return { ...property, tab_id: 'color_management', tab_label: '颜色管理' };
+  }
+  return property;
+}
+
+function propertySortIndex(order: string[], value: string) {
+  const index = order.indexOf(value);
+  return index === -1 ? order.length : index;
+}
+
+function groupById(tab: PropertyTab, groupId: string) {
+  return tab.groups.find(group => group.group_id === groupId);
+}
+
+function fieldByKey(group: PropertyGroup | undefined, fieldKey: string) {
+  return group?.fields.find(field => field.field_key === fieldKey);
+}
+
+function propertyText(group: PropertyGroup | undefined, fieldKey: string, fallback = '') {
+  const field = fieldByKey(group, fieldKey);
+  if (!field) return fallback;
+  const value = formatNativeAttribute(field.value);
+  return `${value}${field.unit ? ` ${field.unit}` : ''}`;
+}
+
+function propertyChecked(group: PropertyGroup | undefined, fieldKey: string) {
+  const value = fieldByKey(group, fieldKey)?.value;
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function propertyFieldLabel(group: PropertyGroup | undefined, fieldKey: string, fallback: string) {
+  return fieldByKey(group, fieldKey)?.field_label || fallback;
+}
+
 const propertyTabs = computed(() => {
-  const tabs = new Map<string, { tab_id: string; tab_label: string; groups: Array<{ group_id: string; group_label: string; fields: NodePropertyRecord[] }> }>();
+  const tabs = new Map<string, PropertyTab>();
   for (const property of selectedNodeProperties.value) {
     const tab = tabs.get(property.tab_id) || { tab_id: property.tab_id, tab_label: property.tab_label, groups: [] };
     let group = tab.groups.find(item => item.group_id === property.group_id);
@@ -267,10 +325,16 @@ const propertyTabs = computed(() => {
     tabs.set(property.tab_id, tab);
   }
   for (const tab of tabs.values()) {
-    tab.groups.sort((left, right) => left.group_label.localeCompare(right.group_label));
+    tab.groups.sort((left, right) => {
+      const byKind = propertySortIndex(propertyGroupOrder, left.group_id) - propertySortIndex(propertyGroupOrder, right.group_id);
+      return byKind || left.group_label.localeCompare(right.group_label);
+    });
     tab.groups.forEach(group => group.fields.sort((left, right) => Number(left.display_order || 0) - Number(right.display_order || 0)));
   }
-  return Array.from(tabs.values());
+  return Array.from(tabs.values()).sort((left, right) => {
+    const byKind = propertySortIndex(propertyTabOrder, left.tab_id) - propertySortIndex(propertyTabOrder, right.tab_id);
+    return byKind || left.tab_label.localeCompare(right.tab_label);
+  });
 });
 const filteredFaces = computed(() => {
   const keyword = geometryKeyword.value.trim().toLowerCase();
@@ -863,13 +927,25 @@ function selectNativeTreeNode(node: FeatureTreeNode) {
 
 function propertiesForNode(node: FeatureTreeNode | null) {
   if (!node) return [];
-  const ids = new Set([
+  const ids = [
     node.id,
     node.sourceNodeId || '',
     node.featureId ? `feature:${node.featureId}` : '',
     node.instanceId ? `instance:${node.instanceId}` : ''
-  ].filter(Boolean));
-  return nodeProperties.value.filter(property => ids.has(property.node_id));
+  ].filter(Boolean);
+  const result: NodePropertyRecord[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    for (const property of nodeProperties.value) {
+      if (property.node_id !== id) continue;
+      const normalized = normalizeNodeProperty(property);
+      const key = `${normalized.tab_id}/${normalized.group_id}/${normalized.field_key}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(normalized);
+    }
+  }
+  return result;
 }
 
 function openPropertiesForNode(node: FeatureTreeNode) {
@@ -1902,27 +1978,126 @@ onBeforeUnmount(() => {
       </div>
       <ElTabs v-if="propertyTabs.length" type="card">
         <ElTabPane v-for="tab in propertyTabs" :key="tab.tab_id" :label="tab.tab_label" :name="tab.tab_id">
-          <section v-for="group in tab.groups" :key="group.group_id" class="property-group">
-            <h4>{{ group.group_label }}</h4>
-            <div v-if="tab.tab_id === 'mass' && group.group_id === 'inertia_matrix'" class="inertia-matrix">
-              <span v-for="field in group.fields" :key="field.field_key">
-                {{ field.field_label }} {{ formatNativeAttribute(field.value) }}{{ field.unit || '' }}
-              </span>
+          <div v-if="tab.tab_id === 'mechanical'" class="catia-tab-panel">
+            <section v-if="groupById(tab, 'update_status')" class="catia-fieldset">
+              <h4>{{ groupById(tab, 'update_status')?.group_label }}</h4>
+              <label class="catia-check warning">
+                <input type="checkbox" :checked="propertyChecked(groupById(tab, 'update_status'), 'deactivated')" disabled />
+                {{ propertyFieldLabel(groupById(tab, 'update_status'), 'deactivated', '已取消激活') }}
+              </label>
+              <label class="catia-check refresh">
+                <input type="checkbox" :checked="propertyChecked(groupById(tab, 'update_status'), 'pending_update')" disabled />
+                {{ propertyFieldLabel(groupById(tab, 'update_status'), 'pending_update', '待更新') }}
+              </label>
+              <label class="catia-check warning">
+                <input type="checkbox" :checked="propertyChecked(groupById(tab, 'update_status'), 'unresolved')" disabled />
+                {{ propertyFieldLabel(groupById(tab, 'update_status'), 'unresolved', '无法解析') }}
+              </label>
+            </section>
+          </div>
+          <div v-else-if="tab.tab_id === 'mass'" class="catia-tab-panel mass-panel">
+            <div class="mass-top">
+              <section class="catia-fieldset">
+                <h4>{{ groupById(tab, 'mass_general')?.group_label || '常规' }}</h4>
+                <div class="catia-row"><span>密度:</span><output>{{ propertyText(groupById(tab, 'mass_general'), 'density') }}</output></div>
+                <div class="catia-row"><span>体积:</span><output>{{ propertyText(groupById(tab, 'mass_general'), 'volume') }}</output></div>
+                <div class="catia-row"><span>质量:</span><output>{{ propertyText(groupById(tab, 'mass_general'), 'mass') }}</output></div>
+                <div class="catia-row"><span>曲面:</span><output>{{ propertyText(groupById(tab, 'mass_general'), 'wet_area') }}</output></div>
+              </section>
+              <section class="catia-fieldset">
+                <h4>{{ groupById(tab, 'center_of_gravity')?.group_label || '重心' }}</h4>
+                <div class="catia-row"><span>x=</span><output>{{ propertyText(groupById(tab, 'center_of_gravity'), 'center_x') }}</output></div>
+                <div class="catia-row"><span>y=</span><output>{{ propertyText(groupById(tab, 'center_of_gravity'), 'center_y') }}</output></div>
+                <div class="catia-row"><span>z=</span><output>{{ propertyText(groupById(tab, 'center_of_gravity'), 'center_z') }}</output></div>
+              </section>
             </div>
-            <dl v-else>
-              <template v-for="field in group.fields" :key="field.field_key">
-                <dt>{{ field.field_label || field.field_key }}</dt>
-                <dd>
-                  <span
-                    v-if="field.field_key.toLowerCase().includes('rgb') || field.field_key.toLowerCase().includes('color')"
-                    class="rgb-swatch"
-                    :style="{ background: rgbPreview(field.value) }"
-                  />
-                  {{ formatNativeAttribute(field.value) }}{{ field.unit ? ` ${field.unit}` : '' }}
-                </dd>
-              </template>
-            </dl>
-          </section>
+            <section class="catia-fieldset">
+              <h4>{{ groupById(tab, 'inertia_matrix')?.group_label || '惯性矩阵' }}</h4>
+              <div class="catia-matrix">
+                <div v-for="key in ['ixx', 'ixy', 'ixz', 'iyx', 'iyy', 'iyz', 'izx', 'izy', 'izz']" :key="key" class="catia-row">
+                  <span>{{ fieldByKey(groupById(tab, 'inertia_matrix'), key)?.field_label || key }}=</span>
+                  <output>{{ propertyText(groupById(tab, 'inertia_matrix'), key) }}</output>
+                </div>
+              </div>
+            </section>
+            <label class="catia-check"><input type="checkbox" disabled /> 仅限主要几何体</label>
+          </div>
+          <div v-else-if="tab.tab_id === 'graphic'" class="catia-tab-panel">
+            <section class="catia-fieldset">
+              <h4>{{ groupById(tab, 'graphic_properties')?.group_label || '图形属性' }}</h4>
+              <div class="graphic-grid">
+                <label>颜色 <output>{{ propertyText(groupById(tab, 'graphic_properties'), 'color') }}</output></label>
+                <label>线型 <output>{{ propertyText(groupById(tab, 'graphic_properties'), 'line_type') }}</output></label>
+                <label>线宽 <output>{{ propertyText(groupById(tab, 'graphic_properties'), 'line_width') }}</output></label>
+              </div>
+              <div class="transparency-line">
+                <span>透明度</span>
+                <input type="range" min="0" max="255" :value="Number(fieldByKey(groupById(tab, 'graphic_properties'), 'transparency')?.value || 0)" disabled />
+                <output>{{ propertyText(groupById(tab, 'graphic_properties'), 'transparency', '0') }}</output>
+              </div>
+            </section>
+            <section class="catia-fieldset">
+              <h4>{{ groupById(tab, 'global_properties')?.group_label || '全局属性' }}</h4>
+              <label class="catia-check"><input type="checkbox" :checked="propertyChecked(groupById(tab, 'global_properties'), 'visible')" disabled /> 显示的</label>
+              <div class="graphic-grid">
+                <label>图层 <output>{{ propertyText(groupById(tab, 'global_properties'), 'layer') }}</output></label>
+                <label>渲染样式 <output>{{ propertyText(groupById(tab, 'global_properties'), 'render_style') }}</output></label>
+              </div>
+              <label class="catia-check"><input type="checkbox" :checked="propertyChecked(groupById(tab, 'global_properties'), 'pickable')" disabled /> 可拾取</label>
+              <label class="catia-check"><input type="checkbox" :checked="propertyChecked(groupById(tab, 'global_properties'), 'low_intensity')" disabled /> 低亮度</label>
+            </section>
+          </div>
+          <div v-else-if="tab.tab_id === 'product'" class="catia-tab-panel product-panel">
+            <section class="catia-fieldset">
+              <h4>产品</h4>
+              <div class="product-form">
+                <label>零件编号 <output>{{ propertyText(groupById(tab, 'product_identity'), 'part_number') }}</output></label>
+                <label>版本 <output>{{ propertyText(groupById(tab, 'product_identity'), 'revision') }}</output></label>
+                <label>定义 <output>{{ propertyText(groupById(tab, 'product_identity'), 'definition') }}</output></label>
+                <label>术语 <output>{{ propertyText(groupById(tab, 'product_identity'), 'nomenclature') }}</output></label>
+                <label>源 <output>{{ propertyText(groupById(tab, 'product_identity'), 'source') }}</output></label>
+                <label>描述 <textarea readonly :value="propertyText(groupById(tab, 'product_identity'), 'description_inst') || propertyText(groupById(tab, 'product_identity'), 'description_ref')" /></label>
+              </div>
+            </section>
+            <section class="catia-fieldset">
+              <h4>产品：已添加的属性</h4>
+              <div class="product-added">
+                <template v-for="field in groupById(tab, 'product_identity')?.fields || []" :key="field.field_key">
+                  <div v-if="!['part_number', 'revision', 'definition', 'nomenclature', 'source', 'description_inst', 'description_ref'].includes(field.field_key)" class="catia-row">
+                    <span>{{ field.field_label }}</span><output>{{ formatNativeAttribute(field.value) }}{{ field.unit ? ` ${field.unit}` : '' }}</output>
+                  </div>
+                </template>
+              </div>
+            </section>
+          </div>
+          <div v-else-if="tab.tab_id === 'color_management'" class="catia-tab-panel">
+            <section class="catia-fieldset">
+              <h4>{{ groupById(tab, 'imported_colors')?.group_label || '导入管理的颜色' }}</h4>
+              <p>此零件当前使用以下设置：</p>
+              <label class="catia-check">
+                <input type="checkbox" :checked="propertyChecked(groupById(tab, 'imported_colors'), 'use_imported_colors')" disabled />
+                {{ propertyFieldLabel(groupById(tab, 'imported_colors'), 'use_imported_colors', '当前零件中已导入的缔柜从参考条件继承颜色') }}
+              </label>
+            </section>
+          </div>
+          <template v-else>
+            <section v-for="group in tab.groups" :key="group.group_id" class="property-group">
+              <h4>{{ group.group_label }}</h4>
+              <dl>
+                <template v-for="field in group.fields" :key="field.field_key">
+                  <dt>{{ field.field_label || field.field_key }}</dt>
+                  <dd>
+                    <span
+                      v-if="field.field_key.toLowerCase().includes('rgb') || field.field_key.toLowerCase().includes('color')"
+                      class="rgb-swatch"
+                      :style="{ background: rgbPreview(field.value) }"
+                    />
+                    {{ formatNativeAttribute(field.value) }}{{ field.unit ? ` ${field.unit}` : '' }}
+                  </dd>
+                </template>
+              </dl>
+            </section>
+          </template>
         </ElTabPane>
       </ElTabs>
       <ElEmpty v-else description="该节点没有可显示属性" />
@@ -2444,6 +2619,146 @@ button:disabled {
   gap: 7px;
   margin: 0;
   overflow-wrap: anywhere;
+}
+.catia-tab-panel {
+  min-height: 280px;
+  border: 1px solid #8f8b7a;
+  background: #f3e7c9;
+  padding: 8px;
+}
+.catia-fieldset {
+  position: relative;
+  border-top: 1px solid #8f8b7a;
+  margin: 8px 0 10px;
+  padding: 10px 6px 6px;
+}
+.catia-fieldset h4 {
+  position: absolute;
+  top: -10px;
+  left: 8px;
+  margin: 0;
+  background: #f3e7c9;
+  color: #222;
+  font-size: 13px;
+  font-weight: 400;
+  padding-right: 8px;
+}
+.catia-check {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 6px;
+  color: #222;
+  font-size: 13px;
+}
+.catia-check input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+.catia-check.warning::before,
+.catia-check.refresh::before {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+.catia-check.warning::before {
+  content: "!";
+  border: 1px solid #d9a600;
+  background: #ffe45c;
+  color: #1d1d1d;
+}
+.catia-check.refresh::before {
+  content: "↻";
+  border: 1px solid #1b6ebd;
+  color: #0b62b6;
+}
+.mass-top {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.9fr) minmax(170px, 1.3fr);
+  gap: 8px;
+}
+.catia-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 3px;
+  min-height: 23px;
+}
+.catia-row span {
+  color: #111;
+}
+.catia-row output,
+.graphic-grid output,
+.product-form output,
+.product-added output {
+  display: block;
+  min-height: 23px;
+  border: 1px solid #c2c2c2;
+  background: #efefef;
+  color: #111;
+  padding: 2px 5px;
+  overflow-wrap: anywhere;
+}
+.catia-matrix {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px 6px;
+}
+.catia-matrix .catia-row {
+  grid-template-columns: 30px minmax(0, 1fr);
+}
+.graphic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.graphic-grid label,
+.product-form label {
+  display: grid;
+  gap: 3px;
+  color: #111;
+}
+.transparency-line {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.transparency-line input {
+  width: 100%;
+}
+.product-panel {
+  max-height: 430px;
+  overflow: auto;
+}
+.product-form {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 4px 8px;
+}
+.product-form label {
+  display: contents;
+}
+.product-form textarea {
+  min-height: 82px;
+  resize: none;
+  border: 1px solid #c2c2c2;
+  background: #fff;
+  padding: 5px;
+}
+.product-added {
+  display: grid;
+  gap: 4px;
+}
+.product-added .catia-row {
+  grid-template-columns: 150px minmax(0, 1fr);
 }
 .rgb-swatch {
   width: 20px;
