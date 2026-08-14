@@ -3462,68 +3462,6 @@ static void AddProductAutomationPropertiesForNode(ParseContext& context,
   catch (...) {}
 }
 
-static void AddProductPanelScaffoldForNode(ParseContext& context,
-                                           const std::string& node_id)
-{
-  if (node_id.empty()) return;
-  AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
-                     "update_status", "\xE6\x9B\xB4\xE6\x96\xB0\xE7\x8A\xB6\xE6\x80\x81",
-                     "deactivated", "\xE5\xB7\xB2\xE5\x8F\x96\xE6\xB6\x88\xE6\xBF\x80\xE6\xB4\xBB",
-                     "false", "", "boolean", "CATIAPropertiesPanel", 1);
-  AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
-                     "update_status", "\xE6\x9B\xB4\xE6\x96\xB0\xE7\x8A\xB6\xE6\x80\x81",
-                     "pending_update", "\xE5\xBE\x85\xE6\x9B\xB4\xE6\x96\xB0",
-                     "true", "", "boolean", "CATIAPropertiesPanel", 2);
-  AddCaaNodeProperty(context, node_id, "mechanical", "\xE6\x9C\xBA\xE6\xA2\xB0",
-                     "update_status", "\xE6\x9B\xB4\xE6\x96\xB0\xE7\x8A\xB6\xE6\x80\x81",
-                     "unresolved", "\xE6\x97\xA0\xE6\xB3\x95\xE8\xA7\xA3\xE6\x9E\x90",
-                     "false", "", "boolean", "CATIAPropertiesPanel", 3);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "graphic_properties", "\xE5\x9B\xBE\xE5\xBD\xA2\xE5\xB1\x9E\xE6\x80\xA7",
-                     "color", "\xE9\xA2\x9C\xE8\x89\xB2",
-                     "\xE6\x97\xA0\xE9\xA2\x9C\xE8\x89\xB2", "", "string",
-                     "CATIAPropertiesPanel", 1);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "graphic_properties", "\xE5\x9B\xBE\xE5\xBD\xA2\xE5\xB1\x9E\xE6\x80\xA7",
-                     "line_type", "\xE7\xBA\xBF\xE5\x9E\x8B",
-                     "\xE6\x97\xA0\xE7\xBA\xBF\xE5\x9E\x8B", "", "string",
-                     "CATIAPropertiesPanel", 2);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "graphic_properties", "\xE5\x9B\xBE\xE5\xBD\xA2\xE5\xB1\x9E\xE6\x80\xA7",
-                     "line_width", "\xE7\xBA\xBF\xE5\xAE\xBD",
-                     "\xE6\x97\xA0\xE5\xAE\xBD\xE5\xBA\xA6", "", "string",
-                     "CATIAPropertiesPanel", 3);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "graphic_properties", "\xE5\x9B\xBE\xE5\xBD\xA2\xE5\xB1\x9E\xE6\x80\xA7",
-                     "transparency", "\xE9\x80\x8F\xE6\x98\x8E\xE5\xBA\xA6",
-                     "0", "", "integer", "CATIAPropertiesPanel", 4);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "global_properties", "\xE5\x85\xA8\xE5\xB1\x80\xE5\xB1\x9E\xE6\x80\xA7",
-                     "visible", "\xE6\x98\xBE\xE7\xA4\xBA\xE7\x9A\x84",
-                     "true", "", "boolean", "CATIAPropertiesPanel", 10);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "global_properties", "\xE5\x85\xA8\xE5\xB1\x80\xE5\xB1\x9E\xE6\x80\xA7",
-                     "layer", "\xE5\x9B\xBE\xE5\xB1\x82",
-                     "\xE6\x97\xA0", "", "string", "CATIAPropertiesPanel", 11);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "global_properties", "\xE5\x85\xA8\xE5\xB1\x80\xE5\xB1\x9E\xE6\x80\xA7",
-                     "render_style", "\xE6\xB8\xB2\xE6\x9F\x93\xE6\xA0\xB7\xE5\xBC\x8F",
-                     "\xE6\xB2\xA1\xE6\x9C\x89\xE7\x89\xB9\xE5\xAE\x9A\xE7\x9A\x84\xE6\xB8\xB2\xE6\x9F\x93",
-                     "", "string", "CATIAPropertiesPanel", 12);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "global_properties", "\xE5\x85\xA8\xE5\xB1\x80\xE5\xB1\x9E\xE6\x80\xA7",
-                     "pickable", "\xE5\x8F\xAF\xE6\x8B\xBE\xE5\x8F\x96",
-                     "false", "", "boolean", "CATIAPropertiesPanel", 13);
-  AddCaaNodeProperty(context, node_id, "graphic", "\xE5\x9B\xBE\xE5\xBD\xA2",
-                     "global_properties", "\xE5\x85\xA8\xE5\xB1\x80\xE5\xB1\x9E\xE6\x80\xA7",
-                     "low_intensity", "\xE4\xBD\x8E\xE4\xBA\xAE\xE5\xBA\xA6",
-                     "false", "", "boolean", "CATIAPropertiesPanel", 14);
-  AddCaaNodeProperty(context, node_id, "color_management", "\xE9\xA2\x9C\xE8\x89\xB2\xE7\xAE\xA1\xE7\x90\x86",
-                     "imported_colors", "\xE5\xAF\xBC\xE5\x85\xA5\xE7\xAE\xA1\xE7\x90\x86\xE7\x9A\x84\xE9\xA2\x9C\xE8\x89\xB2",
-                     "use_imported_colors", "\xE5\xBD\x93\xE5\x89\x8D\xE9\x9B\xB6\xE4\xBB\xB6\xE4\xB8\xAD\xE5\xB7\xB2\xE5\xAF\xBC\xE5\x85\xA5\xE7\x9A\x84\xE7\xBC\x94\xE6\x9F\x9C\xE4\xBB\x8E\xE5\x8F\x82\xE8\x80\x83\xE6\x9D\xA1\xE4\xBB\xB6\xE7\xBB\xA7\xE6\x89\xBF\xE9\xA2\x9C\xE8\x89\xB2",
-                     "false", "", "boolean", "CATIAPropertiesPanel", 1);
-}
-
 static void AddProductAnalyzePropertiesForNode(ParseContext& context,
                                                const std::string& node_id,
                                                CATIAProduct* automation_product)
@@ -3654,7 +3592,6 @@ static void EnrichProductNodeProperties(CATIProduct* product,
   std::vector<std::string>::const_iterator node_id = node_ids.begin();
   for (; node_id != node_ids.end(); ++node_id)
   {
-    AddProductPanelScaffoldForNode(context, *node_id);
     AddProductAutomationPropertiesForNode(context, *node_id, product_properties,
                                           instance);
     AddProductAnalyzePropertiesForNode(context, *node_id, analyze_product);
