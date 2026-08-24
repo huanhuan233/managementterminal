@@ -1,11 +1,11 @@
-// 用途：按真实源格式决定页面身份；STEP 属于 CAD 模型解析，CATPart 属于 Feature Center。
+// 用途：Feature Center 暂停注册期间，统一进入 CAD 模型解析，避免产生不可访问路由。
 export function modelViewerLocation(
   buildId: string,
   revisionId: string,
   sourceFormat: 'STEP' | 'CATPART' | 'CATPRODUCT' | null | undefined
 ) {
-  if (sourceFormat === 'CATPART' || sourceFormat === 'CATPRODUCT') {
-    return { path: '/feature-center', query: { build_id: buildId } };
-  }
-  return { path: '/cad-model', query: { build_id: buildId, revision_id: revisionId } };
+  return {
+    path: '/cad-model',
+    query: { build_id: buildId, revision_id: revisionId, source_format: sourceFormat || '' }
+  };
 }

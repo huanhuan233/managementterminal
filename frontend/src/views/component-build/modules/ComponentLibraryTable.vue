@@ -44,9 +44,7 @@ const emit = defineEmits<{
   edit: [buildId: string]
   deleteBuild: [buildId: string]
   viewCadModel: [buildId: string, revisionId: string]
-  viewDrawing: [buildId: string, taskId: string]
   startStepParsing: [buildId: string]
-  startDrawingParsing: [buildId: string]
   viewComponentSpec: [buildId: string]
   viewYaml: [buildId: string]
   runFusion: [buildId: string]
@@ -112,14 +110,8 @@ function handleMoreCommand(command: string, row: BuildRow) {
     case 'view-cad':
       if (row.cadRevisionId) emit('viewCadModel', row.id, row.cadRevisionId)
       break
-    case 'view-drawing':
-      if (row.drawingTaskId) emit('viewDrawing', row.id, row.drawingTaskId)
-      break
     case 'start-step':
       emit('startStepParsing', row.id)
-      break
-    case 'start-drawing':
-      emit('startDrawingParsing', row.id)
       break
     case 'view-spec':
       emit('viewComponentSpec', row.id)
@@ -278,16 +270,9 @@ function handleDeleteClick(e: MouseEvent, row: BuildRow) {
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
                       查看模型
                     </el-dropdown-item>
-                    <el-dropdown-item command="view-drawing" :disabled="!row.drawingTaskId">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                      查看图纸解析
-                    </el-dropdown-item>
                     <el-dropdown-item divider />
                     <el-dropdown-item command="start-step" :disabled="!row.cadRevisionId">
                       启动 STEP 解析
-                    </el-dropdown-item>
-                    <el-dropdown-item command="start-drawing" :disabled="!row.drawingTaskId">
-                      启动图纸解析
                     </el-dropdown-item>
                     <el-dropdown-item divider />
                     <el-dropdown-item command="view-spec">

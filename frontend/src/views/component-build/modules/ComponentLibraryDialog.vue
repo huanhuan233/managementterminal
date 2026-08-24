@@ -364,18 +364,6 @@ function handleViewCad() {
   ))
 }
 
-function handleViewDrawing() {
-  if (!editingBuild.value?.drawing_task_id) return
-  router.push({
-    path: '/cad-spec',
-    query: {
-      revision_id: editingBuild.value.cad_revision_id,
-      task_id: editingBuild.value.drawing_task_id,
-      build_id: editingBuild.value.id
-    }
-  })
-}
-
 function handleStartParsing(role: Api.ComponentBuild.RetryRole) {
   if (!currentBuildId.value) return
   sourceParsing.value = true
@@ -567,20 +555,7 @@ watch(visible, (val) => {
                   <code class="mono">{{ editingBuild.drawing_task_id }}</code>
                 </div>
               </div>
-              <div class="status-card-actions">
-                <ElButton v-if="editingBuild?.drawing_task_id" size="small" @click="handleViewDrawing">
-                  查看解析结果
-                </ElButton>
-                <ElButton
-                  v-if="editingBuild?.drawing_task_id"
-                  size="small"
-                  :loading="sourceParsing"
-                  :disabled="!canStartParsing('drawing')"
-                  @click="handleStartParsing('drawing')"
-                >
-                  开始解析
-                </ElButton>
-              </div>
+              <div class="status-card-actions" />
             </div>
 
             <!-- ComponentSpec/YAML card -->

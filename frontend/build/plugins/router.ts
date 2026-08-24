@@ -8,6 +8,12 @@ export function setupElegantRouter() {
       base: 'src/layouts/base-layout/index.vue',
       blank: 'src/layouts/blank-layout/index.vue'
     },
+    pageExcludePatterns: [
+      '**/components/**',
+      'feature-center/**',
+      'cad-spec/**',
+      'patent-annotation/**'
+    ],
     customRoutes: {
       names: [
         'exception_403',

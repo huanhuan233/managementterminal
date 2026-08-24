@@ -494,20 +494,6 @@ async function recomputeMeasurements() {
   }
 }
 
-function openCadSpecPage() {
-  if (!selectedRevisionId.value) {
-    window.$message?.warning('请先选择已上传的 CAD 模型');
-    return;
-  }
-  router.push({
-    path: '/cad-spec',
-    query: {
-      revision_id: selectedRevisionId.value,
-      ...(buildId.value ? { build_id: buildId.value } : {})
-    }
-  });
-}
-
 function goBackToComponentBuild() {
   if (!buildId.value) return;
   router.push({ path: '/component-build', query: { build_id: buildId.value } });
@@ -712,13 +698,6 @@ onBeforeUnmount(() => {
       </ElButton>
 
       <ElButton v-if="buildId" @click="goBackToComponentBuild">返回图元建库</ElButton>
-
-      <ElButton :disabled="!selectedRevisionId" @click="openCadSpecPage">
-        <template #icon>
-          <icon-carbon-document-requirements />
-        </template>
-        生成组件规范
-      </ElButton>
 
       <div class="status-area">
         <ElTag :type="statusText === '解析完成' ? 'success' : statusText === '解析失败' ? 'danger' : 'info'">
