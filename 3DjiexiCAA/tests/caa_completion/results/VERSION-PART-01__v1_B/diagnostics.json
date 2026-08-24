@@ -1,1 +1,0 @@
-[{"diagnostic_id":"D000001","severity":"warning","stage":"document","code":"MODEL_CONTAINS_STALE_OBJECTS","message":"34 enumerated objects are not up to date; see coverage feature IDs","feature_id":"F000001"}]

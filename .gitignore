@@ -1,5 +1,7 @@
 /.env
 backend/.env
+.runtime/
+3DjiexiCAA/
 cad-work/
 frontend/node_modules/
 frontend/dist/
@@ -11,5 +13,10 @@ __pycache__/
 *.pyo
 *.pyd
 *.log
+*.rar
+*.zip
 0.27
 /Kimi_Agent_AI网站风格优化
+/P1*/
+/P2*/
+selftest_output*/
