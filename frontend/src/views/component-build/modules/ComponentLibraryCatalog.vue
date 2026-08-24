@@ -105,7 +105,13 @@ function isSelected(id: string) {
       <template v-for="item in visibleItems" :key="item.id">
         <div
           class="catalog-item"
-          :class="{ active: isSelected(item.id), expanded: isExpanded(item.id), 'root-item': item.nodeType === 'library' }"
+          :class="{
+            active: isSelected(item.id),
+            expanded: isExpanded(item.id),
+            'root-item': item.nodeType === 'library',
+            'family-item': item.nodeType === 'family',
+            'type-item': item.nodeType === 'type'
+          }"
           :style="{ paddingLeft: `${10 + item.depth * 16}px` }"
           :title="item.label"
           @click="handleItemClick(item)"
@@ -175,18 +181,20 @@ function isSelected(id: string) {
 .catalog-body {
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 2px 8px 8px;
 }
 
 .catalog-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  height: 38px;
   padding: 0 10px;
+  margin-bottom: 3px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1.35;
   color: #5a6a7e;
   transition: background-color 0.15s;
 }
@@ -218,6 +226,17 @@ function isSelected(id: string) {
   font-weight: 600;
   color: #1a2332;
   border-top: 1px solid #edf0f5;
+}
+
+.catalog-item.family-item {
+  font-weight: 500;
+  color: #3f4d62;
+}
+
+.catalog-item.type-item {
+  height: 36px;
+  margin-bottom: 3px;
+  color: #6a778a;
 }
 
 .catalog-item-icon {

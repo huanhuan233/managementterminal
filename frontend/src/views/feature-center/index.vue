@@ -1531,22 +1531,24 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <div class="panel-scroll" :class="{ 'feature-tree-panel': activeTab === 'recognized' }">
-            <ElTree
-              v-if="activeTab === 'bom' && contract?.bom.nodes.length"
-              :data="contract.bom.nodes"
-              node-key="node_id"
-              default-expand-all
-              :props="{ label: 'name', children: 'children' }"
-              highlight-current
-              @node-click="selectBom"
-            >
-              <template #default="{ data }">
-                <span class="tree-node">
-                  <span>{{ data.name }}</span>
-                  <small v-if="data.quantity > 1">×{{ data.quantity }}</small>
-                </span>
-              </template>
-            </ElTree>
+            <div v-if="activeTab === 'bom' && contract?.bom.nodes.length" class="bom-tree-fill">
+              <ElTree
+                class="bom-tree"
+                :data="contract.bom.nodes"
+                node-key="node_id"
+                default-expand-all
+                :props="{ label: 'name', children: 'children' }"
+                highlight-current
+                @node-click="selectBom"
+              >
+                <template #default="{ data }">
+                  <span class="tree-node">
+                    <span>{{ data.name }}</span>
+                    <small v-if="data.quantity > 1">×{{ data.quantity }}</small>
+                  </span>
+                </template>
+              </ElTree>
+            </div>
             <ElEmpty v-else-if="activeTab === 'bom'" description="当前文件没有装配 BOM" />
 
             <div v-show="activeTab === 'recognized'" class="feature-tab-content">
@@ -2218,6 +2220,7 @@ button:disabled {
 .workspace {
   position: relative;
   display: grid;
+  height: 100%;
   min-height: 0;
   flex: 1;
   grid-template-columns: var(--navigation-width, 310px) minmax(0, 1fr) 330px;
@@ -2245,6 +2248,7 @@ button:disabled {
 .navigation {
   position: relative;
   display: flex;
+  height: 100%;
   flex-direction: column;
 }
 .navigation.collapsed {
@@ -2281,12 +2285,50 @@ button:disabled {
   border-bottom-color: var(--el-color-primary);
   color: var(--el-color-primary);
 }
-.panel-scroll,
+.panel-scroll {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  padding: 10px;
+}
 .details-scroll {
   min-height: 0;
   flex: 1;
   overflow: auto;
   padding: 10px;
+}
+.panel-scroll :deep(.el-tree),
+.bom-tree-fill {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+}
+.bom-tree-fill {
+  display: flex;
+  width: 100%;
+  min-height: calc(100% - 0px);
+  overflow: auto;
+  background: var(--el-bg-color);
+}
+.bom-tree {
+  flex: 1 1 auto;
+  align-self: stretch;
+  height: 100%;
+  min-height: 100%;
+  width: 100%;
+}
+.bom-tree :deep(.el-tree-node) {
+  min-width: 100%;
+}
+.bom-tree :deep(.el-tree-node__content) {
+  min-width: 100%;
+}
+.bom-tree :deep(.el-tree-node__children) {
+  min-width: 100%;
 }
 .panel-scroll.feature-tree-panel {
   display: flex;

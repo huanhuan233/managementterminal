@@ -255,9 +255,9 @@ def test_unified_source_upload_routes_catpart_case_insensitively(component_clien
     response = client.post(
         "/api/component-builds",
         data={
-            "category_code": "aero-general",
-            "part_type_code": "aero-general-part",
-            "component_name": "航空框架",
+            "category_code": "support-frame",
+            "part_type_code": "frame",
+            "component_name": "机械框架",
         },
         files={"source_file": ("框架 (终版).CATPart", b"CATIA", "application/octet-stream")},
     )
@@ -274,8 +274,8 @@ def test_unified_source_upload_routes_catproduct_case_insensitively(component_cl
     response = client.post(
         "/api/component-builds",
         data={
-            "category_code": "aero-general",
-            "part_type_code": "aero-general-part",
+            "category_code": "support-frame",
+            "part_type_code": "frame",
             "component_name": "assembly",
         },
         files={"source_file": ("assembly.CATProduct", b"CATProduct", "application/octet-stream")},
@@ -297,8 +297,8 @@ def test_unified_source_upload_routes_catproduct_zip_bundle(component_client):
     response = client.post(
         "/api/component-builds",
         data={
-            "category_code": "aero-general",
-            "part_type_code": "aero-general-part",
+            "category_code": "support-frame",
+            "part_type_code": "frame",
             "component_name": "assembly bundle",
         },
         files={"source_file": ("assembly-bundle.zip", buffer.getvalue(), "application/zip")},
@@ -316,8 +316,8 @@ def test_cart_is_explicitly_rejected(component_client):
     response = client.post(
         "/api/component-builds",
         data={
-            "category_code": "aero-general",
-            "part_type_code": "aero-general-part",
+            "category_code": "support-frame",
+            "part_type_code": "frame",
             "component_name": "错误文件",
         },
         files={"source_file": ("wrong.cart", b"bad", "application/octet-stream")},
@@ -422,7 +422,7 @@ def test_catalog_endpoint_returns_categories_and_cascading_parts(component_clien
         "support-frame", "shaft-transmission", "roller", "connection-fastening", "drive-actuation", "functional"
     ]
     assert [library["library_code"] for library in response.json()["libraries"]] == [
-        "MECHANICAL_COMPONENT_LIBRARY", "AEROSPACE_PART_LIBRARY"
+        "MECHANICAL_COMPONENT_LIBRARY"
     ]
     assert any(part["part_type_code"] == "flange" for part in categories[3]["parts"])
 

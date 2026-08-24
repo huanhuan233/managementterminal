@@ -65,6 +65,8 @@ CATEGORIES: tuple[CatalogCategory, ...] = (
         _part("bracket", "支架／支座", "Bracket", "bracket", 4),
         _part("column", "立柱", "Column", "column", 5),
         _part("beam", "横梁", "Beam", "beam", 6),
+        _part("support-ring", "支撑环", "Support Ring", "support-ring", 7),
+        _part("support-plate", "支板", "Support Plate", "support-plate", 8),
     )),
     _category("shaft-transmission", "轴系与传动类", "Shaft / Gear / Bearing", 2, (
         _part("shaft", "传动轴", "Shaft", "shaft", 1),
@@ -91,6 +93,8 @@ CATEGORIES: tuple[CatalogCategory, ...] = (
         _part("key", "键", "Key", "key", 4),
         _part("pin", "销", "Pin", "pin", 5),
         _part("clamp", "卡箍", "Clamp", "clamp", 6),
+        _part("sleeve", "套筒", "Sleeve", "sleeve", 7),
+        _part("retaining-ring", "挡圈 / 卡簧", "Retaining Ring / Circlip", "retaining-ring", 8),
     )),
     _category("drive-actuation", "驱动与执行类", "Motor / Cylinder / Spring", 5, (
         _part("motor", "电机", "Motor", "motor", 1),
@@ -109,48 +113,9 @@ CATEGORIES: tuple[CatalogCategory, ...] = (
         _part("slider", "滑块", "Slider", "slider", 7),
         _part("air-ring", "风环", "Air Ring", "air-ring", 8),
         _part("cooling-unit", "冷却装置", "Cooling Unit", "cooling-unit", 9),
+        _part("barrel-body", "桶体", "Barrel Body", "barrel-body", 10),
+        _part("cone-body", "锥体", "Cone Body", "cone-body", 11),
     )),
-)
-
-
-# 用途：定义航空航天库的八个稳定分类；叶子类型继续使用现有通用目录选择能力。
-AEROSPACE_CATEGORIES: tuple[CatalogCategory, ...] = (
-    _category("aero-airframe-load", "机体承力结构类", "Frame / Rib / Spar", 1, (
-        _part("aero-frame", "框", "Frame", "aero-frame", 1),
-        _part("aero-rib", "肋", "Rib", "aero-rib", 2),
-        _part("aero-spar", "梁", "Spar", "aero-spar", 3),
-    ), "AEROSPACE_PART_LIBRARY"),
-    _category("aero-panel-skin", "壁板与蒙皮类", "Panel / Skin / Bulkhead", 2, (
-        _part("aero-panel", "壁板", "Panel", "aero-panel", 1),
-        _part("aero-skin", "蒙皮", "Skin", "aero-skin", 2),
-        _part("aero-bulkhead", "隔框", "Bulkhead", "aero-bulkhead", 3),
-    ), "AEROSPACE_PART_LIBRARY"),
-    _category("aero-engine-rotor", "发动机转子类", "Blade / Disk / Shaft", 3, (
-        _part("aero-blade", "叶片", "Blade", "aero-blade", 1),
-        _part("aero-disk", "轮盘", "Disk", "aero-disk", 2),
-        _part("aero-shaft", "转轴", "Shaft", "aero-shaft", 3),
-    ), "AEROSPACE_PART_LIBRARY"),
-    _category("aero-engine-stator-casing", "发动机静子与机匣类", "Stator / Casing / Combustor", 4, (
-        _part("aero-stator", "静子", "Stator", "aero-stator", 1),
-        _part("aero-casing", "机匣", "Casing", "aero-casing", 2),
-        _part("aero-combustor", "燃烧室", "Combustor", "aero-combustor", 3),
-    ), "AEROSPACE_PART_LIBRARY"),
-    _category("aero-landing-actuation", "起落架与作动类", "Landing Gear / Actuator", 5, (
-        _part("aero-landing-gear", "起落架", "Landing Gear", "aero-landing-gear", 1),
-        _part("aero-actuator", "作动器", "Actuator", "aero-actuator", 2),
-    ), "AEROSPACE_PART_LIBRARY"),
-    _category("aero-pipe-attachment", "管路与连接附件类", "Pipe / Joint / Bracket", 6, (
-        _part("aero-pipe", "管路", "Pipe", "aero-pipe", 1),
-        _part("aero-joint", "接头", "Joint", "aero-joint", 2),
-        _part("aero-bracket", "航空支架", "Bracket", "aero-bracket", 3),
-    ), "AEROSPACE_PART_LIBRARY"),
-    _category("aero-spacecraft-structure", "航天器结构与机构类", "Spacecraft Structure / Mechanism", 7, (
-        _part("aero-spacecraft-structure", "航天器结构", "Spacecraft Structure", "aero-spacecraft", 1),
-        _part("aero-spacecraft-mechanism", "航天器机构", "Mechanism", "aero-mechanism", 2),
-    ), "AEROSPACE_PART_LIBRARY"),
-    _category("aero-general", "通用航空航天零件", "General Aerospace Part", 8, (
-        _part("aero-general-part", "通用航空航天零件", "General Aerospace Part", "aero-general", 1),
-    ), "AEROSPACE_PART_LIBRARY"),
 )
 
 
@@ -158,10 +123,6 @@ LIBRARIES: tuple[CatalogLibrary, ...] = (
     CatalogLibrary(
         "MECHANICAL_COMPONENT_LIBRARY", "机械工程图元库", "Mechanical Component Library", 1,
         _node_id("library/mechanical-component-library"), CATEGORIES,
-    ),
-    CatalogLibrary(
-        "AEROSPACE_PART_LIBRARY", "航空航天零件库", "Aerospace Part Library", 2,
-        _node_id("library/aerospace-part-library"), AEROSPACE_CATEGORIES,
     ),
 )
 

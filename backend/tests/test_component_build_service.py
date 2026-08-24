@@ -230,9 +230,9 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
     revision_id = uuid4()
     repository = MemoryComponentBuildRepository()
     build = await repository.create_build(
-        component_id="aero-general-001",
-        component_name="航空框架",
-        component_type="aero-general-part",
+        component_id="frame-001",
+        component_name="机械框架",
+        component_type="frame",
         standard_number="RIB-03",
         version="03.1",
         cad_revision_id=revision_id,
@@ -275,7 +275,7 @@ async def test_viewer_contract_uses_controlled_urls_and_optional_feature_center(
     assert contract["status"] == "ready"
     assert contract["source_format"] == "CATPART"
     assert contract["summary"]["part_number"] == "RIB-03"
-    assert contract["summary"]["part_name"] == "航空框架"
+    assert contract["summary"]["part_name"] == "机械框架"
     assert contract["summary"]["version"] == "03.1"
     assert contract["viewer_asset"]["glb_url"].startswith(f"/api/component-builds/{build.id}/viewer/assets/")
     assert "cad-work" not in contract["viewer_asset"]["glb_url"]

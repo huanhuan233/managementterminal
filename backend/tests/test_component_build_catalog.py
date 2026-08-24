@@ -35,31 +35,22 @@ def test_catalog_defines_all_six_categories_and_required_parts():
         "functional",
     ]
     assert {part.code for category in CATEGORIES for part in category.parts} == {
-        "frame", "base", "housing", "bracket", "column", "beam",
+        "frame", "base", "housing", "bracket", "column", "beam", "support-ring", "support-plate",
         "shaft", "bearing", "bearing-housing", "gear", "pulley", "sprocket", "coupling", "lead-screw",
         "traction-roller", "guide-roller", "press-roller", "conveyor-roller", "idler-roller", "paddle-roller",
-        "bolt-joint", "flange", "hinge", "key", "pin", "clamp",
+        "bolt-joint", "flange", "hinge", "key", "pin", "clamp", "sleeve", "retaining-ring",
         "motor", "reducer", "cylinder", "hydraulic-cylinder", "spring",
         "hopper", "agitator", "cutter", "die", "screen", "guide-rail", "slider", "air-ring", "cooling-unit",
+        "barrel-body", "cone-body",
     }
 
 
-def test_catalog_defines_two_stable_library_roots_and_aerospace_categories():
+def test_catalog_defines_single_mechanical_library_root():
     assert [library.code for library in LIBRARIES] == [
         "MECHANICAL_COMPONENT_LIBRARY",
-        "AEROSPACE_PART_LIBRARY",
     ]
-    assert [library.label for library in LIBRARIES] == ["机械工程图元库", "航空航天零件库"]
-    assert [category.label for category in LIBRARIES[1].categories] == [
-        "机体承力结构类",
-        "壁板与蒙皮类",
-        "发动机转子类",
-        "发动机静子与机匣类",
-        "起落架与作动类",
-        "管路与连接附件类",
-        "航天器结构与机构类",
-        "通用航空航天零件",
-    ]
+    assert [library.label for library in LIBRARIES] == ["机械工程图元库"]
+    assert LIBRARIES[0].categories == CATEGORIES
     assert str(CATEGORIES[0].catalog_node_id) == "5f3b58f8-6b36-5372-ad97-7612b368bbce"
     assert str(CATEGORIES[0].parts[0].catalog_node_id) == "68652018-674f-548e-aa1c-62e5d56c8501"
 
@@ -67,9 +58,9 @@ def test_catalog_defines_two_stable_library_roots_and_aerospace_categories():
 def test_catalog_payload_exposes_library_roots_without_duplicating_categories():
     payload = catalog_payload()
 
-    assert len(payload["libraries"]) == 2
-    assert payload["libraries"][1]["library_code"] == "AEROSPACE_PART_LIBRARY"
-    assert len(payload["libraries"][1]["categories"]) == 8
+    assert len(payload["libraries"]) == 1
+    assert payload["libraries"][0]["library_code"] == "MECHANICAL_COMPONENT_LIBRARY"
+    assert len(payload["libraries"][0]["categories"]) == len(CATEGORIES)
     assert len({item["category_code"] for item in payload["categories"]}) == len(payload["categories"])
 
 
@@ -135,9 +126,7 @@ async def test_tree_keeps_empty_catalog_groups_and_preserves_legacy_builds():
     unknown = await repository.create_build(component_id="legacy-other", component_name="旧未知件", component_type="legacy-thing")
     tree = await ComponentBuildService(repository, source_status_reader=SourceStatusReader()).get_tree()
 
-    assert [node["library_code"] for node in tree[:2]] == [
-        "MECHANICAL_COMPONENT_LIBRARY", "AEROSPACE_PART_LIBRARY",
-    ]
+    assert [node["library_code"] for node in tree[:1]] == ["MECHANICAL_COMPONENT_LIBRARY"]
     mechanical_categories = tree[0]["children"]
     assert [node["category_code"] for node in mechanical_categories[:6]] == [
         "support-frame", "shaft-transmission", "roller", "connection-fastening", "drive-actuation", "functional",

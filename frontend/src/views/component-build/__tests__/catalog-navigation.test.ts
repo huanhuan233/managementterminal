@@ -3,9 +3,6 @@ import test from 'node:test'
 import { buildCatalogNavigation } from '../catalog-navigation'
 import { isSupportedPartSourceFile } from '../source-file'
 
-/**
- * 用途：构造最小双库树，验证两个系统库保持同级且统计互不污染。
- */
 function makeLibrary(id: string, label: string, category: string, buildCount: number) {
   return {
     id,
@@ -20,7 +17,8 @@ function makeLibrary(id: string, label: string, category: string, buildCount: nu
       category_code: category,
       children: [{
         id: `${id}-type`,
-        label: '零件类型',
+        label: '中文零件类型',
+        label_en: 'English Part Type',
         node_type: 'type',
         category_code: category,
         part_type_code: `${category}-type`,
@@ -35,15 +33,26 @@ function makeLibrary(id: string, label: string, category: string, buildCount: nu
   }
 }
 
-test('机械库与航空航天库是两个同级系统根', () => {
+test('机械库作为唯一系统根显示', () => {
   const items = buildCatalogNavigation([
-    makeLibrary('MECHANICAL_COMPONENT_LIBRARY', '机械工程图元库', 'mechanical', 2),
-    makeLibrary('AEROSPACE_PART_LIBRARY', '航空航天零件库', 'aerospace', 1)
+    makeLibrary('MECHANICAL_COMPONENT_LIBRARY', '机械工程图元库', 'mechanical', 2)
   ])
   const roots = items.filter(item => item.nodeType === 'library')
-  assert.deepEqual(roots.map(item => item.parentId), [undefined, undefined])
-  assert.deepEqual(roots.map(item => item.count), [2, 1])
-  assert.deepEqual(roots.map(item => item.label), ['机械工程图元库', '航空航天零件库'])
+  assert.deepEqual(roots.map(item => item.parentId), [undefined])
+  assert.deepEqual(roots.map(item => item.count), [2])
+  assert.deepEqual(roots.map(item => item.label), ['机械工程图元库'])
+  assert.equal(items.some(item => item.label === '中文零件类型'), true)
+  assert.equal(items.some(item => item.label === 'English Part Type'), false)
+})
+
+test('前端隐藏航空航天零件库及其子分类', () => {
+  const items = buildCatalogNavigation([
+    makeLibrary('MECHANICAL_COMPONENT_LIBRARY', '机械工程图元库', 'mechanical', 2),
+    makeLibrary('AEROSPACE_PART_LIBRARY', '航空航天零件库', 'aero-general', 1)
+  ])
+  assert.equal(items.some(item => item.label.includes('航空航天')), false)
+  assert.equal(items.some(item => item.code === 'AEROSPACE_PART_LIBRARY'), false)
+  assert.equal(items.some(item => item.categoryCode?.startsWith('aero-')), false)
 })
 
 test('上传提示接受 STEP、STP、CATPart、CATProduct 和依赖 ZIP，且大小写不敏感', () => {

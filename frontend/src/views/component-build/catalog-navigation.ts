@@ -26,6 +26,8 @@ export interface CatalogNavigationItem {
   descendantCategoryCodes: string[]
 }
 
+const hiddenCatalogLibraryCodes = new Set(['AEROSPACE_PART_LIBRARY'])
+
 /**
  * 用途：递归生成导航项；系统库、分类和零件类型均来自后端，不维护前端分类常量。
  */
@@ -37,9 +39,10 @@ export function buildCatalogNavigation(
   const result: CatalogNavigationItem[] = []
   for (const node of nodes) {
     if (!['library', 'family', 'type'].includes(node.node_type)) continue
+    if (isHiddenCatalogNode(node)) continue
     result.push({
       id: node.id,
-      label: node.node_type === 'library' ? node.label : `${node.label}${node.label_en ? ` · ${node.label_en}` : ''}`,
+      label: catalogNodeLabel(node),
       code: node.library_code || node.category_code || node.part_type_code || node.id,
       count: countBuildNodes(node),
       parentId,
@@ -52,6 +55,19 @@ export function buildCatalogNavigation(
     result.push(...buildCatalogNavigation(node.children, node.id, depth + 1))
   }
   return result
+}
+
+function catalogNodeLabel(node: CatalogTreeNodeLike): string {
+  if (node.node_type === 'library') return node.label
+  return node.label
+}
+
+function isHiddenCatalogNode(node: CatalogTreeNodeLike): boolean {
+  if (node.library_code && hiddenCatalogLibraryCodes.has(node.library_code)) return true
+  if (node.label.includes('航空航天零件库')) return true
+  if (node.category_code?.startsWith('aero-')) return true
+  if (node.part_type_code?.startsWith('aero-')) return true
+  return false
 }
 
 /**
